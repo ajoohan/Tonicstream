@@ -1,0 +1,84 @@
+const $ = s => document.querySelector(s);
+let tab;
+
+const fmtTime = s => s == null ? '라이브' : `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+const fmtSize = b => !b ? '크기 알 수 없음' : b > 1e6 ? `${(b / 1e6).toFixed(1)}MB` : `${Math.round(b / 1e3)}KB`;
+const safeName = s => (s || 'video').replace(/[\\/:*?"<>|\n\r\t~]+/g, ' ').trim().slice(0, 80) || 'video';
+const say = t => { $('#msg').textContent = t || ''; };
+
+function el(tag, props = {}, ...kids) {
+  const e = Object.assign(document.createElement(tag), props);
+  e.append(...kids);
+  return e;
+}
+
+async function frameVideos() {
+  // content.js를 모든 프레임에 주입(이미 있으면 무시)하고 프레임별 영상 목록을 수집
+  const injected = await chrome.scripting.executeScript({
+    target: { tabId: tab.id, allFrames: true }, files: ['content.js'],
+  }).catch(() => []);
+  const out = [];
+  for (const { frameId } of injected) {
+    const res = await chrome.tabs.sendMessage(tab.id, { type: 'list' }, { frameId }).catch(() => null);
+    for (const v of res?.videos || []) out.push({ ...v, frameId });
+  }
+  return out.sort((a, b) => b.recording - a.recording || b.area - a.area);
+}
+
+async function send(frameId, msg) {
+  const res = await chrome.tabs.sendMessage(tab.id, msg, { frameId }).catch(e => ({ ok: false, error: e.message }));
+  if (res && !res.ok) say(res.error);
+  setTimeout(render, 300);
+}
+
+function videoCard(v, i) {
+  const info = `${v.width}×${v.height} · ${fmtTime(v.duration)}${i === 0 && !v.recording ? ' · 메인 영상' : ''}`;
+  const row = el('div', { className: 'row' });
+  if (v.recording) {
+    row.append(el('span', { className: 'rec', textContent: `● 녹화 중 ${fmtTime(v.elapsed)}` }),
+      el('button', { className: 'primary', textContent: '정지 후 저장', onclick: () => send(v.frameId, { type: 'stop', id: v.id }) }));
+  } else {
+    const title = tab.title;
+    if (v.duration != null) {
+      row.append(el('button', { className: 'primary', textContent: '처음부터 끝까지 녹화',
+        onclick: () => send(v.frameId, { type: 'record', id: v.id, fromStart: true, title }) }));
+    }
+    row.append(el('button', { textContent: '지금부터 녹화',
+      onclick: () => send(v.frameId, { type: 'record', id: v.id, fromStart: false, title }) }));
+    if (v.directSrc) {
+      row.append(el('button', { textContent: '바로 다운로드', onclick: () => download(v.directSrc) }));
+    }
+  }
+  return el('div', { className: 'card' }, el('div', { className: 'meta', textContent: info }), row);
+}
+
+function fileCard(f) {
+  let host = '';
+  try { host = new URL(f.url).hostname; } catch {}
+  return el('div', { className: 'card' },
+    el('div', { className: 'meta', textContent: `${fmtSize(f.size)} · ${host}` }),
+    el('div', { className: 'row' }, el('button', { className: 'primary', textContent: 'MP4 다운로드', onclick: () => download(f.url) })));
+}
+
+async function download(url) {
+  const res = await chrome.runtime.sendMessage({ type: 'download', url, filename: `${safeName(tab.title)}.mp4` });
+  say(res?.ok ? '다운로드를 시작했습니다.' : `다운로드 실패: ${res?.error || ''} → "녹화"를 이용해 보세요.`);
+}
+
+async function render() {
+  const [videos, files] = await Promise.all([
+    frameVideos(),
+    chrome.runtime.sendMessage({ type: 'getMedia', tabId: tab.id }),
+  ]);
+  $('#videos').replaceChildren(...(videos.length ? videos.map(videoCard)
+    : [el('p', { className: 'empty', textContent: '재생 중인 영상이 없습니다. 영상을 먼저 재생해 주세요.' })]));
+  $('#files').replaceChildren(...(files?.length ? files.map(fileCard)
+    : [el('p', { className: 'empty', textContent: '감지된 원본 파일이 없습니다.' })]));
+}
+
+(async () => {
+  [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  $('#refresh').onclick = render;
+  await render();
+  setInterval(() => { if (document.querySelector('.rec')) render(); }, 1000);
+})();
