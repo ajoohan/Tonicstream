@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tonicstream — 보고 있는 영상을 MP4로</title>
+<meta name="description" content="Edge·Chrome에서 재생 중인 쇼츠·릴스·틱톡·Vimeo 영상을 클릭 한 번에 MP4로 저장하는 브라우저 확장 프로그램. by plustonic">
+<meta property="og:title" content="Tonicstream — 보고 있는 영상을 MP4로">
+<meta property="og:description" content="쇼츠·릴스·틱톡 레퍼런스, 클릭 한 번에 MP4로 저장하세요.">
+<meta property="og:url" content="https://stream.plustonic.com/">
+<meta property="og:type" content="website">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23e5484d'/%3E%3Ccircle cx='16' cy='16' r='6' fill='white'/%3E%3C/svg%3E">
+<style>
+:root {
+  --bg: #fbfbfc; --surface: #ffffff; --fg: #17171c; --muted: #62626e; --line: #e7e7ec;
+  --accent: #e5484d; --accent-soft: #fdecec; --card: #f4f4f7;
+  --radius: 16px; --max: 1080px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111114; --surface: #18181c; --fg: #ededf1; --muted: #9d9daa; --line: #2a2a31;
+    --accent-soft: #3a1a1c; --card: #1f1f24;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #111114; --surface: #18181c; --fg: #ededf1; --muted: #9d9daa; --line: #2a2a31;
+  --accent-soft: #3a1a1c; --card: #1f1f24;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font: 16px/1.65 system-ui, -apple-system, "Segoe UI", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  word-break: keep-all; -webkit-font-smoothing: antialiased;
+}
+a { color: inherit; }
+.wrap { max-width: var(--max); margin: 0 auto; padding: 0 20px; }
+
+/* nav */
+nav { position: sticky; top: 0; z-index: 10; background: color-mix(in srgb, var(--bg) 85%, transparent); backdrop-filter: blur(10px); border-bottom: 1px solid var(--line); }
+nav .wrap { display: flex; align-items: center; justify-content: space-between; height: 60px; }
+.logo { display: flex; align-items: center; gap: 10px; font-weight: 700; text-decoration: none; letter-spacing: -.01em; }
+.logo i { width: 26px; height: 26px; border-radius: 8px; background: var(--accent); display: grid; place-items: center; }
+.logo i::after { content: ""; width: 9px; height: 9px; border-radius: 50%; background: #fff; }
+nav ul { display: flex; gap: 24px; list-style: none; margin: 0; padding: 0; font-size: 14px; color: var(--muted); }
+nav ul a { text-decoration: none; }
+nav ul a:hover { color: var(--fg); }
+@media (max-width: 640px) { nav ul { display: none; } }
+
+.btn { display: inline-flex; align-items: center; gap: 8px; padding: 12px 20px; border-radius: 12px; font-weight: 600; font-size: 15px; text-decoration: none; border: 1px solid var(--line); background: var(--surface); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.primary:hover { filter: brightness(1.06); }
+.btn.sm { padding: 8px 14px; font-size: 14px; }
+
+/* hero */
+.hero { padding: 72px 0 56px; display: grid; grid-template-columns: 1.1fr .9fr; gap: 48px; align-items: center; }
+@media (max-width: 860px) { .hero { grid-template-columns: 1fr; padding-top: 48px; } }
+.eyebrow { display: inline-block; font-size: 13px; font-weight: 600; color: var(--accent); background: var(--accent-soft); padding: 4px 10px; border-radius: 999px; }
+h1 { font-size: clamp(34px, 5.4vw, 54px); line-height: 1.18; letter-spacing: -.03em; margin: 18px 0 16px; }
+h1 em { font-style: normal; color: var(--accent); }
+.lead { font-size: 18px; color: var(--muted); max-width: 34em; margin: 0 0 28px; }
+.cta { display: flex; gap: 10px; flex-wrap: wrap; }
+.note { font-size: 13px; color: var(--muted); margin-top: 14px; }
+
+/* popup mock */
+.mock { background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 18px; box-shadow: 0 30px 60px -30px rgba(0,0,0,.25); max-width: 380px; justify-self: center; width: 100%; }
+.mock h4 { margin: 0 0 12px; font-size: 15px; display: flex; justify-content: space-between; }
+.mock h4 span { color: var(--muted); font-weight: 400; }
+.mock .lbl { font-size: 12px; font-weight: 600; margin: 14px 0 6px; }
+.mock .lbl small { color: var(--muted); font-weight: 400; margin-left: 4px; }
+.mcard { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; font-size: 12px; color: var(--muted); }
+.mrow { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.mrow b { font-weight: 500; font-size: 12px; padding: 5px 10px; border-radius: 7px; border: 1px solid var(--line); background: var(--surface); color: var(--fg); }
+.mrow b.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.rec { color: var(--accent); font-weight: 700; }
+.rec::before { content: "● "; animation: blink 1.2s infinite; }
+@keyframes blink { 50% { opacity: .2; } }
+@media (prefers-reduced-motion: reduce) { .rec::before { animation: none; } html { scroll-behavior: auto; } }
+
+/* sections */
+section { padding: 64px 0; border-top: 1px solid var(--line); }
+h2 { font-size: clamp(26px, 3.4vw, 34px); letter-spacing: -.02em; line-height: 1.3; margin: 0 0 10px; }
+.sub { color: var(--muted); margin: 0 0 36px; }
+.grid { display: grid; gap: 16px; grid-template-columns: repeat(3, 1fr); }
+@media (max-width: 860px) { .grid { grid-template-columns: 1fr; } }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 24px; }
+.card .num { font-size: 13px; font-weight: 700; color: var(--accent); }
+.card h3 { font-size: 19px; margin: 6px 0 8px; letter-spacing: -.01em; }
+.card p { margin: 0; color: var(--muted); font-size: 15px; }
+
+/* who */
+.uses { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+@media (max-width: 860px) { .uses { grid-template-columns: repeat(2, 1fr); } }
+.use { background: var(--card); border-radius: 14px; padding: 18px; font-size: 15px; }
+.use strong { display: block; margin-bottom: 4px; }
+.use span { color: var(--muted); font-size: 14px; }
+
+/* table */
+.tbl { width: 100%; border-collapse: collapse; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; font-size: 15px; }
+.tbl th, .tbl td { text-align: left; padding: 14px 18px; border-bottom: 1px solid var(--line); }
+.tbl th { font-size: 13px; color: var(--muted); font-weight: 600; background: var(--card); }
+.tbl tr:last-child td { border-bottom: 0; }
+.tag { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 6px; background: var(--accent-soft); color: var(--accent); }
+.tag.gray { background: var(--card); color: var(--muted); }
+@media (max-width: 640px) { .tbl th:nth-child(3), .tbl td:nth-child(3) { display: none; } .tbl th, .tbl td { padding: 12px; } }
+
+/* steps */
+.steps { counter-reset: s; display: grid; gap: 12px; grid-template-columns: repeat(4, 1fr); padding: 0; margin: 0; list-style: none; }
+@media (max-width: 860px) { .steps { grid-template-columns: 1fr; } }
+.steps li { counter-increment: s; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px; font-size: 15px; }
+.steps li::before { content: counter(s); display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: #fff; font-weight: 700; font-size: 14px; margin-bottom: 12px; }
+.steps code { font-size: 13px; background: var(--card); padding: 2px 6px; border-radius: 5px; }
+.tip { margin-top: 16px; font-size: 14px; color: var(--muted); }
+.tip kbd { font: 600 12px ui-monospace, monospace; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; padding: 1px 6px; background: var(--surface); color: var(--fg); }
+
+/* faq */
+details { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px 20px; margin-bottom: 10px; }
+summary { font-weight: 600; cursor: pointer; list-style: none; display: flex; justify-content: space-between; gap: 12px; }
+summary::-webkit-details-marker { display: none; }
+summary::after { content: "+"; color: var(--muted); font-weight: 400; font-size: 20px; line-height: 1; }
+details[open] summary::after { content: "–"; }
+details p { color: var(--muted); margin: 10px 0 0; font-size: 15px; }
+
+.notice { background: var(--accent-soft); border-radius: var(--radius); padding: 24px 28px; }
+.notice h3 { margin: 0 0 8px; font-size: 17px; }
+.notice ul { margin: 0; padding-left: 20px; color: var(--fg); font-size: 15px; }
+.notice li { margin: 4px 0; }
+
+footer { border-top: 1px solid var(--line); padding: 32px 0 48px; color: var(--muted); font-size: 14px; }
+footer .wrap { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+footer a { text-decoration: none; margin-left: 16px; }
+footer a:first-child { margin-left: 0; }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <a class="logo" href="#"><i></i>Tonicstream</a>
+    <ul>
+      <li><a href="#features">기능</a></li>
+      <li><a href="#sites">지원 사이트</a></li>
+      <li><a href="#install">설치</a></li>
+      <li><a href="#faq">FAQ</a></li>
+    </ul>
+    <a class="btn primary sm" href="tonicstream-extension.zip" download>무료 다운로드</a>
+  </div>
+</nav>
+
+<header class="wrap hero">
+  <div>
+    <span class="eyebrow">Edge · Chrome 확장 프로그램</span>
+    <h1>보고 있는 그 영상,<br><em>클릭 한 번</em>에 MP4로.</h1>
+    <p class="lead">쇼츠, 릴스, 틱톡, Vimeo까지. 레퍼런스로 남겨두고 싶은 영상을 브라우저에서 바로 MP4 파일로 저장하세요. 설치만 하면 끝, 가입도 서버도 필요 없습니다.</p>
+    <div class="cta">
+      <a class="btn primary" href="tonicstream-extension.zip" download>무료 다운로드 (ZIP)</a>
+      <a class="btn" href="#install">설치 방법 보기</a>
+    </div>
+    <p class="note">Microsoft Edge · Google Chrome 최신 버전 지원 · v0.3.1</p>
+  </div>
+
+  <div class="mock" aria-label="확장 프로그램 화면 예시">
+    <h4>영상 저장 <span>↻</span></h4>
+    <div class="lbl">화면 녹화 저장 <small>쇼츠 · 릴스 · 틱톡</small></div>
+    <div class="mcard">1080×1920 · 0:28 · 지금 보는 영상
+      <div class="mrow"><b class="on">처음부터 끝까지 녹화</b><b>지금부터 녹화</b></div>
+    </div>
+    <div class="lbl">탭 전체 녹화 <small>어떤 사이트든</small></div>
+    <div class="mcard"><span class="rec">탭 녹화 중 0:12</span>
+      <div class="mrow"><b class="on">정지 후 저장</b></div>
+    </div>
+    <div class="lbl">바로 다운로드 <small>원본 파일</small></div>
+    <div class="mcard">12.4MB · 원본 화질
+      <div class="mrow"><b class="on">다운로드</b></div>
+    </div>
+  </div>
+</header>
+
+<section id="features">
+  <div class="wrap">
+    <h2>세 가지 방법으로, 거의 모든 영상을</h2>
+    <p class="sub">사이트에 맞는 방법을 확장 프로그램이 알아서 보여줍니다.</p>
+    <div class="grid">
+      <div class="card">
+        <div class="num">01</div>
+        <h3>영상 녹화</h3>
+        <p>재생 중인 영상을 그대로 MP4로 저장합니다. ‘처음부터 끝까지’를 누르면 무한 반복되는 쇼츠도 딱 한 바퀴만 녹화하고 자동 저장돼요. 유튜브 광고 구간은 알아서 건너뜁니다.</p>
+      </div>
+      <div class="card">
+        <div class="num">02</div>
+        <h3>원본 다운로드</h3>
+        <p>사이트가 원본 파일을 보내주는 경우(틱톡 등) 녹화 없이 원본 화질 그대로 즉시 저장합니다. 기다릴 필요가 없어요.</p>
+      </div>
+      <div class="card">
+        <div class="num">03</div>
+        <h3>탭 전체 녹화</h3>
+        <p>위 방법이 안 통하는 사이트라면 탭 화면과 소리를 통째로 녹화하세요. 영상을 전체화면으로 두면 영상만 깔끔하게 담깁니다. 녹화 중에도 다른 탭에서 일할 수 있어요.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>이런 분들께 필요해요</h2>
+    <p class="sub">기획 회의 전, “그 영상 뭐였더라?” 하고 다시 찾는 시간을 줄여드립니다.</p>
+    <div class="uses">
+      <div class="use"><strong>마케터</strong><span>숏폼 트렌드·광고 레퍼런스 아카이빙</span></div>
+      <div class="use"><strong>콘텐츠 기획자</strong><span>포맷·편집 스타일 분석용 샘플 수집</span></div>
+      <div class="use"><strong>크리에이터</strong><span>내가 올린 영상 백업</span></div>
+      <div class="use"><strong>에이전시</strong><span>시안 보고용 참고 영상 정리</span></div>
+    </div>
+  </div>
+</section>
+
+<section id="sites">
+  <div class="wrap">
+    <h2>지원 사이트</h2>
+    <p class="sub">대표 사이트 기준이며, 일반 웹사이트 영상도 대부분 저장됩니다.</p>
+    <table class="tbl">
+      <thead><tr><th>사이트</th><th>저장 방식</th><th>걸리는 시간</th></tr></thead>
+      <tbody>
+        <tr><td>유튜브 · 유튜브 쇼츠</td><td><span class="tag">영상 녹화</span></td><td>영상 길이만큼</td></tr>
+        <tr><td>인스타그램 릴스</td><td><span class="tag">영상 녹화</span></td><td>영상 길이만큼</td></tr>
+        <tr><td>틱톡</td><td><span class="tag">원본 다운로드</span></td><td>즉시</td></tr>
+        <tr><td>Vimeo (퍼가기 영상 포함)</td><td><span class="tag">영상 녹화</span></td><td>영상 길이만큼</td></tr>
+        <tr><td>그 밖의 사이트</td><td><span class="tag">녹화</span> <span class="tag">원본</span> <span class="tag">탭 녹화</span></td><td>방식에 따라</td></tr>
+        <tr><td>넷플릭스 등 유료 OTT (DRM)</td><td><span class="tag gray">지원 안 함</span></td><td>—</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section id="install">
+  <div class="wrap">
+    <h2>1분이면 설치 끝</h2>
+    <p class="sub">스토어를 거치지 않는 ‘개발자 모드’ 설치 방식입니다.</p>
+    <ol class="steps">
+      <li><a href="tonicstream-extension.zip" download><strong>ZIP 파일 다운로드</strong></a> 후 원하는 폴더에 압축을 풀어주세요.</li>
+      <li>주소창에 <code>edge://extensions</code><br>(크롬은 <code>chrome://extensions</code>) 입력</li>
+      <li><strong>개발자 모드</strong>를 켜고 <strong>압축 풀린 항목 로드</strong> 클릭</li>
+      <li>압축을 푼 폴더를 선택하면 완료! 퍼즐 아이콘에서 고정해 두면 편해요.</li>
+    </ol>
+    <p class="tip">💡 단축키 <kbd>Alt</kbd> + <kbd>Shift</kbd> + <kbd>V</kbd> 로 언제든 저장 창을 열 수 있어요. 압축 푼 폴더는 지우지 마세요.</p>
+  </div>
+</section>
+
+<section id="faq">
+  <div class="wrap">
+    <h2>자주 묻는 질문</h2>
+    <p class="sub">&nbsp;</p>
+    <details><summary>화질은 어떻게 되나요?</summary><p>녹화 방식은 재생 중인 화질 그대로 저장됩니다. 유튜브는 플레이어 톱니바퀴에서 화질을 높게 설정한 뒤 녹화하세요. 원본 다운로드는 원본 화질 그대로입니다.</p></details>
+    <details><summary>30초 쇼츠는 저장에 얼마나 걸리나요?</summary><p>녹화 방식은 실제 재생 시간만큼 걸립니다(30초 영상 = 약 30초). 녹화 중에 창을 닫거나 다른 탭으로 이동해도 계속 녹화됩니다. 단, 영상이 있는 탭은 닫지 마세요.</p></details>
+    <details><summary>음소거된 릴스도 소리가 저장되나요?</summary><p>네. 화면에서 음소거 상태여도 영상 원래 소리가 함께 저장됩니다.</p></details>
+    <details><summary>맥에서 소리가 안 나와요.</summary><p>녹화 파일의 소리는 Opus 코덱이라 일부 맥 기본 앱에서 재생되지 않을 수 있습니다. VLC, 프리미어, CapCut 등에서는 정상 재생됩니다.</p></details>
+    <details><summary>넷플릭스·티빙 영상은 왜 안 되나요?</summary><p>유료 OTT 영상은 저작권 보호 기술(DRM)이 적용되어 있어 브라우저가 녹화를 막습니다. Tonicstream은 이 보호 기술을 우회하지 않으며, 앞으로도 지원하지 않습니다.</p></details>
+    <details><summary>내 시청 기록이나 영상이 어딘가로 전송되나요?</summary><p>아니요. 모든 작업은 내 브라우저 안에서만 이뤄지고, 파일은 내 컴퓨터의 다운로드 폴더에 바로 저장됩니다. 별도 서버도, 회원가입도, 데이터 수집도 없습니다. <a href="privacy.html">개인정보 처리방침</a></p></details>
+    <details><summary>왜 크롬 웹 스토어에 없나요?</summary><p>크롬 웹 스토어는 유튜브 영상 저장 기능이 있는 확장 프로그램을 등록받지 않습니다. 그래서 이 페이지에서 직접 받아 설치하는 방식으로 제공합니다.</p></details>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="notice">
+      <h3>바르게 사용해 주세요</h3>
+      <ul>
+        <li>본인이 만든 영상, 권리자에게 허락받은 영상, 또는 내부 참고·리서치 용도로만 사용해 주세요.</li>
+        <li>저장한 영상을 재업로드하거나 광고·상업 소재로 사용하면 저작권 침해가 될 수 있습니다.</li>
+        <li>각 플랫폼의 이용약관을 확인해 주세요. 사용에 따른 책임은 사용자에게 있습니다.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <span>© 2026 plustonic · Tonicstream</span>
+    <span><a href="privacy.html">개인정보 처리방침</a></span>
+  </div>
+</footer>
+
+</body>
+</html>

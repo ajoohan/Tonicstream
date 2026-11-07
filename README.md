@@ -66,3 +66,12 @@ extension/
 ├─ offscreen.html/js 숨겨진 페이지: 틱톡 원본 받기, 탭 전체 녹화
 ├─ popup.html/css/js  아이콘 클릭 시 보이는 화면
 ```
+
+## 소개 페이지 (stream.plustonic.com)
+
+`docs/` 폴더가 소개 페이지입니다 (`index.html`, `privacy.html`, 설치용 `tonicstream-extension.zip`).
+확장 프로그램을 수정한 뒤에는 ZIP을 다시 만들어 주세요:
+
+```
+cd extension && rm -f ../docs/tonicstream-extension.zip && zip -qr ../docs/tonicstream-extension.zip . -x '.*'
+```
