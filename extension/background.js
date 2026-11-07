@@ -22,7 +22,8 @@ function isSegmentUrl(u) {
   // MSE 스트리밍 조각: 단독 재생이 안 되므로 목록에서 제외
   return u.hostname.endsWith('googlevideo.com') ||
     /[?&](range|sq|bytestart)=/.test(u.search) ||
-    /\.(m4s|ts)$/i.test(u.pathname);
+    /\.(m4s|ts)$/i.test(u.pathname) ||
+    /\/(range|segment)[\/-]/i.test(u.pathname); // Vimeo 등 DASH/HLS 조각 경로
 }
 
 chrome.webRequest.onHeadersReceived.addListener(
