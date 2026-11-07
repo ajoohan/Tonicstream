@@ -22,7 +22,7 @@ async function frameVideos() {
     const res = await chrome.tabs.sendMessage(tab.id, { type: 'list' }, { frameId }).catch(() => null);
     for (const v of res?.videos || []) out.push({ ...v, frameId });
   }
-  return out.sort((a, b) => b.recording - a.recording || b.area - a.area);
+  return out.sort((a, b) => b.recording - a.recording || b.active - a.active || b.area - a.area);
 }
 
 async function send(frameId, msg) {
@@ -32,11 +32,13 @@ async function send(frameId, msg) {
 }
 
 function videoCard(v, i) {
-  const info = `${v.width}×${v.height} · ${fmtTime(v.duration)}${i === 0 && !v.recording ? ' · 메인 영상' : ''}`;
+  const info = `${v.width}×${v.height} · ${fmtTime(v.duration)}${i === 0 && !v.recording ? ' · 지금 보는 영상' : ''}`;
   const row = el('div', { className: 'row' });
   if (v.recording) {
     row.append(el('span', { className: 'rec', textContent: `● 녹화 중 ${fmtTime(v.elapsed)}` }),
       el('button', { className: 'primary', textContent: '정지 후 저장', onclick: () => send(v.frameId, { type: 'stop', id: v.id }) }));
+  } else if (v.crossOrigin && v.directSrc) {
+    row.append(el('button', { className: 'primary', textContent: '원본 MP4 다운로드', onclick: () => download(v.directSrc) }));
   } else {
     const title = tab.title;
     if (v.duration != null) {

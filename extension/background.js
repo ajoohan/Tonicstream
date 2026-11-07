@@ -3,6 +3,25 @@
 // 팝업의 "녹화 저장"으로 처리한다.
 
 const MAX_PER_TAB = 30;
+
+// 틱톡 영상 서버는 tiktok.com에서 온 요청만 허용하므로,
+// 확장 프로그램이 시작한 다운로드(탭 밖 요청, tabId -1)에만 Referer를 붙여준다.
+const TIKTOK_CDN = ['tiktokcdn.com', 'tiktokcdn-us.com', 'tiktokv.com', 'tiktokv.us', 'tiktok.com', 'byteoversea.com', 'ibytedtos.com'];
+chrome.declarativeNetRequest.updateSessionRules({
+  removeRuleIds: [1],
+  addRules: [{
+    id: 1,
+    priority: 1,
+    action: {
+      type: 'modifyHeaders',
+      requestHeaders: [
+        { header: 'referer', operation: 'set', value: 'https://www.tiktok.com/' },
+        { header: 'origin', operation: 'set', value: 'https://www.tiktok.com' },
+      ],
+    },
+    condition: { requestDomains: TIKTOK_CDN, tabIds: [-1], resourceTypes: ['xmlhttprequest', 'other'] },
+  }],
+});
 let mediaP; // { [tabId]: [{url, type, size, ts}] }
 const load = () => (mediaP ??= chrome.storage.session.get('media').then(r => r.media || {}));
 const save = media => chrome.storage.session.set({ media });
@@ -67,9 +86,31 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true;
   }
   if (msg.type === 'download') {
-    chrome.downloads.download({ url: msg.url, filename: msg.filename, saveAs: false })
+    download(msg.url, msg.filename)
       .then(id => sendResponse({ ok: true, id }))
       .catch(e => sendResponse({ ok: false, error: e.message }));
     return true;
   }
+});
+
+const isTikTokCdn = url => {
+  try { const h = new URL(url).hostname; return TIKTOK_CDN.some(d => h === d || h.endsWith('.' + d)); } catch { return false; }
+};
+
+async function download(url, filename) {
+  if (!isTikTokCdn(url)) return chrome.downloads.download({ url, filename, saveAs: false });
+  // 틱톡: 다운로드 API 요청에는 Referer를 붙일 수 없어서, 숨겨진 페이지에서 받아 저장
+  if (!(await chrome.offscreen.hasDocument())) {
+    await chrome.offscreen.createDocument({ url: 'offscreen.html', reasons: ['BLOBS'], justification: '영상 파일 저장' });
+  }
+  const res = await chrome.runtime.sendMessage({ type: 'offscreen-fetch', url });
+  if (!res?.ok) throw new Error(res?.error || '받기 실패');
+  return chrome.downloads.download({ url: res.url, filename, saveAs: false });
+}
+
+// 저장이 끝나면 숨겨진 페이지를 닫아 메모리 정리
+chrome.downloads.onChanged.addListener(async d => {
+  if (!d.state || d.state.current === 'in_progress') return;
+  const [item] = await chrome.downloads.search({ id: d.id });
+  if (item?.url.startsWith('blob:') && (await chrome.offscreen.hasDocument())) chrome.offscreen.closeDocument();
 });

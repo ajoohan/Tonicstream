@@ -36,12 +36,15 @@ if (!window.__tonicstream) {
         const rec = recs.get(id);
         return {
           id,
+          active: !v.paused && r.width > 0 && r.bottom > 0 && r.top < innerHeight,
           width: v.videoWidth,
           height: v.videoHeight,
           duration: Number.isFinite(v.duration) ? v.duration : null,
           area: Math.round(r.width * r.height),
           playing: !v.paused,
           directSrc: /^https?:/.test(v.currentSrc) ? v.currentSrc : null,
+          // 다른 도메인에서 직접 불러온 영상(틱톡 등)은 브라우저가 녹화를 막음 → 원본 다운로드로 처리
+          crossOrigin: /^https?:/.test(v.currentSrc) && new URL(v.currentSrc).origin !== location.origin && !v.crossOrigin,
           recording: !!rec,
           elapsed: rec ? Math.round((Date.now() - rec.startedAt) / 1000) : 0,
         };
@@ -57,6 +60,9 @@ if (!window.__tonicstream) {
     const v = byId.get(id);
     if (!v) throw new Error('영상을 찾을 수 없습니다. 페이지를 새로고침 해주세요.');
     if (recs.has(id)) return;
+    if (document.querySelector('#movie_player.ad-showing, .ad-showing video')) {
+      throw new Error('유튜브 광고가 재생 중입니다. 광고가 끝난 뒤 다시 눌러주세요.');
+    }
 
     if (fromStart && v.currentTime > 0.2) {
       v.currentTime = 0;
