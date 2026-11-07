@@ -5,15 +5,18 @@
 if (!window.__tonicstream) {
   window.__tonicstream = true;
 
+  // 피드형 사이트(쇼츠/릴스/틱톡)는 영상 요소가 계속 생기고 사라지므로
+  // 요소를 강하게 붙잡지 않도록 WeakMap만 쓰고, 찾을 때는 DOM에서 다시 찾는다.
   const ids = new WeakMap();
-  const byId = new Map();
-  const recs = new Map(); // id -> { recorder, startedAt, cleanup }
+  const recs = new Map(); // id -> { recorder, startedAt }
   let nextId = 1;
 
   const idOf = v => {
-    if (!ids.has(v)) { const id = `${nextId++}`; ids.set(v, id); byId.set(id, v); }
+    if (!ids.has(v)) ids.set(v, `${nextId++}`);
     return ids.get(v);
   };
+  const findVideo = id => [...document.querySelectorAll('video')].find(v => ids.get(v) === id);
+  const adShowing = () => !!document.querySelector('#movie_player.ad-showing, .html5-video-player.ad-showing');
 
   const MIME_CANDIDATES = [
     'video/mp4;codecs=avc1.640028,mp4a.40.2',
@@ -25,7 +28,7 @@ if (!window.__tonicstream) {
   ];
   const pickMime = () => MIME_CANDIDATES.find(t => MediaRecorder.isTypeSupported(t)) || '';
 
-  const safeName = s => (s || 'video').replace(/[\\/:*?"<>|\n\r\t]+/g, ' ').trim().slice(0, 80) || 'video';
+  const safeName = s => (s || 'video').replace(/[\\/:*?"<>|~\u0000-\u001f]+/g, ' ').replace(/^[.\s]+|[.\s]+$/g, '').slice(0, 80) || 'video';
 
   function list() {
     return [...document.querySelectorAll('video')]
@@ -57,10 +60,10 @@ if (!window.__tonicstream) {
   });
 
   async function startRecording(id, fromStart, title) {
-    const v = byId.get(id);
-    if (!v) throw new Error('영상을 찾을 수 없습니다. 페이지를 새로고침 해주세요.');
+    const v = findVideo(id);
+    if (!v) throw new Error('영상을 찾을 수 없습니다. 창을 새로고침(↻) 해주세요.');
     if (recs.has(id)) return;
-    if (document.querySelector('#movie_player.ad-showing, .ad-showing video')) {
+    if (adShowing()) {
       throw new Error('유튜브 광고가 재생 중입니다. 광고가 끝난 뒤 다시 눌러주세요.');
     }
 
@@ -82,28 +85,28 @@ if (!window.__tonicstream) {
     const chunks = [];
     recorder.ondataavailable = e => e.data.size && chunks.push(e.data);
 
-    const onPause = () => recorder.state === 'recording' && recorder.pause();
-    const onPlay = () => recorder.state === 'paused' && recorder.resume();
-    let last = v.currentTime;
-    // 쇼츠/릴스/틱톡은 무한 반복 재생되므로, 끝에 닿거나 처음으로 되감기면 자동 종료
-    const onTime = () => {
-      if (!fromStart) return;
-      const looped = v.currentTime < last - 0.5;
-      const atEnd = Number.isFinite(v.duration) && v.currentTime >= v.duration - 0.25;
-      last = v.currentTime;
-      if (looped || atEnd) stopRecording(id);
+    recorder.onerror = () => stopRecording(id);
+
+    // 영상이 멈춰 있거나 유튜브 광고가 나오는 동안에는 녹화도 일시정지
+    const sync = () => {
+      const hold = v.paused || adShowing();
+      if (hold && recorder.state === 'recording') recorder.pause();
+      if (!hold && recorder.state === 'paused') recorder.resume();
     };
-    const onEnded = () => stopRecording(id);
-    v.addEventListener('pause', onPause);
-    v.addEventListener('play', onPlay);
-    v.addEventListener('timeupdate', onTime);
-    v.addEventListener('ended', onEnded);
+    let last = v.currentTime;
+    const onTime = () => {
+      sync();
+      if (adShowing()) { last = 0; return; } // 광고 중 시간 이동은 무시
+      // 쇼츠/릴스/틱톡은 무한 반복 재생 → 처음으로 되감기면 한 바퀴 끝으로 보고 자동 종료
+      if (fromStart && v.currentTime < last - 0.5) return stopRecording(id);
+      last = v.currentTime;
+    };
+    const onStop = () => stopRecording(id);
+    const handlers = { pause: sync, play: sync, timeupdate: onTime, ended: onStop, emptied: onStop };
+    for (const [ev, fn] of Object.entries(handlers)) v.addEventListener(ev, fn);
 
     const cleanup = () => {
-      v.removeEventListener('pause', onPause);
-      v.removeEventListener('play', onPlay);
-      v.removeEventListener('timeupdate', onTime);
-      v.removeEventListener('ended', onEnded);
+      for (const [ev, fn] of Object.entries(handlers)) v.removeEventListener(ev, fn);
       recs.delete(id);
     };
 
@@ -123,7 +126,8 @@ if (!window.__tonicstream) {
     };
 
     recorder.start(1000);
-    recs.set(id, { recorder, startedAt: Date.now(), cleanup });
+    sync(); // 자동재생이 막혀 멈춰 있으면 재생될 때까지 대기
+    recs.set(id, { recorder, startedAt: Date.now() });
   }
 
   function stopRecording(id) {

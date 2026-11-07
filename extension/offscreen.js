@@ -10,7 +10,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 });
 
 // ── 탭 전체 녹화 ──
-let tabRec = null; // { recorder, stream, audioCtx }
+let tabRec = null; // { recorder }
 
 const MIME_CANDIDATES = [
   'video/mp4;codecs=avc1.640028,mp4a.40.2',
@@ -39,12 +39,13 @@ async function startTabRec(streamId, filename) {
     stream.getTracks().forEach(t => t.stop());
     audioCtx.close();
     tabRec = null;
-    if (!chunks.length) return;
+    if (!chunks.length) return chrome.runtime.sendMessage({ type: 'tabrec-ended' });
     const type = recorder.mimeType || mimeType || 'video/webm';
     const ext = type.includes('mp4') ? 'mp4' : 'webm';
     const url = URL.createObjectURL(new Blob(chunks, { type }));
-    chrome.runtime.sendMessage({ type: 'tabrec-save', url, filename: `${filename}.${ext}` });
+    chrome.runtime.sendMessage({ type: 'tabrec-ended', url, filename: `${filename}.${ext}` });
   };
+  recorder.onerror = () => recorder.state !== 'inactive' && recorder.stop();
   // 사용자가 탭 공유를 끊거나 탭이 사라지면 자동 저장
   stream.getVideoTracks()[0].addEventListener('ended', () => recorder.state !== 'inactive' && recorder.stop());
   recorder.start(1000);
@@ -60,7 +61,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true;
   }
   if (msg.type === 'offscreen-tabrec-stop') {
-    if (tabRec && tabRec.recorder.state !== 'inactive') tabRec.recorder.stop();
-    sendResponse({ ok: true });
+    const recording = !!tabRec && tabRec.recorder.state !== 'inactive';
+    if (recording) tabRec.recorder.stop();
+    sendResponse({ ok: true, recording });
   }
 });

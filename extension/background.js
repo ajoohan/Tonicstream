@@ -14,14 +14,11 @@ chrome.declarativeNetRequest.updateSessionRules({
     priority: 1,
     action: {
       type: 'modifyHeaders',
-      requestHeaders: [
-        { header: 'referer', operation: 'set', value: 'https://www.tiktok.com/' },
-        { header: 'origin', operation: 'set', value: 'https://www.tiktok.com' },
-      ],
+      requestHeaders: [{ header: 'referer', operation: 'set', value: 'https://www.tiktok.com/' }],
     },
     condition: { requestDomains: TIKTOK_CDN, tabIds: [-1], resourceTypes: ['xmlhttprequest', 'other'] },
   }],
-});
+}).catch(e => console.warn('TikTok 규칙 등록 실패', e));
 let mediaP; // { [tabId]: [{url, type, size, ts}] }
 const load = () => (mediaP ??= chrome.storage.session.get('media').then(r => r.media || {}));
 const save = media => chrome.storage.session.set({ media });
@@ -61,17 +58,27 @@ chrome.webRequest.onHeadersReceived.addListener(
     list.unshift({ url: details.url, type: type || 'video/mp4', size, ts: Date.now() });
     list.length = Math.min(list.length, MAX_PER_TAB);
     save(media);
-    chrome.action.setBadgeText({ tabId: details.tabId, text: String(list.length) });
+    updateBadge(details.tabId);
   },
   { urls: ['<all_urls>'], types: ['media', 'xmlhttprequest', 'other'] },
   ['responseHeaders']
 );
+
+// 배지: 탭 녹화 중이면 REC, 아니면 감지된 원본 파일 개수
+async function updateBadge(tabId) {
+  const [media, { tabRec }] = await Promise.all([load(), chrome.storage.session.get('tabRec')]);
+  const rec = tabRec?.tabId === tabId;
+  const n = media[tabId]?.length || 0;
+  if (rec) chrome.action.setBadgeBackgroundColor({ tabId, color: '#e5484d' }).catch(() => {});
+  chrome.action.setBadgeText({ tabId, text: rec ? 'REC' : n ? String(n) : '' }).catch(() => {});
+}
 
 async function clearTab(tabId) {
   const media = await load();
   if (!media[tabId]) return;
   delete media[tabId];
   save(media);
+  updateBadge(tabId);
 }
 
 chrome.tabs.onRemoved.addListener(clearTab);
@@ -89,10 +96,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
   if (msg.type === 'tabrec-stop') { stopTabRecording().then(() => sendResponse({ ok: true })); return true; }
   if (msg.type === 'tabrec-status') { chrome.storage.session.get('tabRec').then(r => sendResponse(r.tabRec || null)); return true; }
-  if (msg.type === 'tabrec-save') {
-    // 숨겨진 페이지가 녹화를 마치고 저장할 파일 주소를 보내옴
-    chrome.downloads.download({ url: msg.url, filename: msg.filename, saveAs: false });
-    chrome.storage.session.remove('tabRec');
+  if (msg.type === 'tabrec-ended') {
+    // 숨겨진 페이지에서 녹화가 끝남 (정지 버튼, 탭 닫힘, 공유 중단 모두 여기로 옴)
+    onTabRecEnded(msg);
     return;
   }
   if (msg.type === 'getMedia') {
@@ -111,13 +117,21 @@ const isTikTokCdn = url => {
   try { const h = new URL(url).hostname; return TIKTOK_CDN.some(d => h === d || h.endsWith('.' + d)); } catch { return false; }
 };
 
+let offscreenJobs = 0; // 숨겨진 페이지에서 진행 중인 받기/저장 작업 수
+
 async function download(url, filename) {
   if (!isTikTokCdn(url)) return chrome.downloads.download({ url, filename, saveAs: false });
   // 틱톡: 다운로드 API 요청에는 Referer를 붙일 수 없어서, 숨겨진 페이지에서 받아 저장
   await ensureOffscreen();
-  const res = await chrome.runtime.sendMessage({ type: 'offscreen-fetch', url });
-  if (!res?.ok) throw new Error(res?.error || '받기 실패');
-  return chrome.downloads.download({ url: res.url, filename, saveAs: false });
+  offscreenJobs++;
+  try {
+    const res = await chrome.runtime.sendMessage({ type: 'offscreen-fetch', url });
+    if (!res?.ok) throw new Error(res?.error || '받기 실패');
+    offscreenJobs++; // 아래 저장이 끝날 때 downloads.onChanged에서 감소
+    return await chrome.downloads.download({ url: res.url, filename, saveAs: false });
+  } finally {
+    offscreenJobs--;
+  }
 }
 
 async function ensureOffscreen() {
@@ -131,8 +145,10 @@ async function ensureOffscreen() {
 chrome.downloads.onChanged.addListener(async d => {
   if (!d.state || d.state.current === 'in_progress') return;
   const [item] = await chrome.downloads.search({ id: d.id });
+  if (!item?.url.startsWith(`blob:chrome-extension://${chrome.runtime.id}/`)) return;
+  offscreenJobs = Math.max(0, offscreenJobs - 1);
   const { tabRec } = await chrome.storage.session.get('tabRec');
-  if (item?.url.startsWith('blob:') && !tabRec && (await chrome.offscreen.hasDocument())) chrome.offscreen.closeDocument();
+  if (!tabRec && offscreenJobs === 0 && (await chrome.offscreen.hasDocument())) chrome.offscreen.closeDocument().catch(() => {});
 });
 
 // ── 탭 전체 녹화 ─────────────────────────────────────────
@@ -145,16 +161,23 @@ async function startTabRecording(tabId, streamId, filename) {
   const res = await chrome.runtime.sendMessage({ type: 'offscreen-tabrec-start', streamId, filename });
   if (!res?.ok) throw new Error(res?.error || '탭 녹화를 시작하지 못했습니다.');
   await chrome.storage.session.set({ tabRec: { tabId, startedAt: Date.now() } });
-  chrome.action.setBadgeBackgroundColor({ color: '#e5484d' });
-  chrome.action.setBadgeText({ tabId, text: 'REC' });
+  updateBadge(tabId);
 }
 
 async function stopTabRecording() {
+  // 실제 정리는 숨겨진 페이지가 보내는 'tabrec-ended'에서 처리
+  const res = await chrome.runtime.sendMessage({ type: 'offscreen-tabrec-stop' }).catch(() => null);
+  if (!res?.recording) onTabRecEnded({}); // 숨겨진 페이지가 이미 없거나 녹화 중이 아니면 상태만 정리
+}
+
+async function onTabRecEnded({ url, filename }) {
   const { tabRec } = await chrome.storage.session.get('tabRec');
-  if (!tabRec) return;
   await chrome.storage.session.remove('tabRec');
-  chrome.action.setBadgeText({ tabId: tabRec.tabId, text: '' }).catch(() => {});
-  await chrome.runtime.sendMessage({ type: 'offscreen-tabrec-stop' }).catch(() => {});
+  if (tabRec) updateBadge(tabRec.tabId);
+  if (url) {
+    offscreenJobs++;
+    chrome.downloads.download({ url, filename, saveAs: false }).catch(() => { offscreenJobs--; });
+  }
 }
 
 chrome.tabs.onRemoved.addListener(async tabId => {
