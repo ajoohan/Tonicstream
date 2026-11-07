@@ -81,6 +81,20 @@ chrome.webRequest.onBeforeRequest.addListener(
 );
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg.type === 'tabrec-start') {
+    startTabRecording(msg.tabId, msg.streamId, msg.filename)
+      .then(() => sendResponse({ ok: true }))
+      .catch(e => sendResponse({ ok: false, error: e.message }));
+    return true;
+  }
+  if (msg.type === 'tabrec-stop') { stopTabRecording().then(() => sendResponse({ ok: true })); return true; }
+  if (msg.type === 'tabrec-status') { chrome.storage.session.get('tabRec').then(r => sendResponse(r.tabRec || null)); return true; }
+  if (msg.type === 'tabrec-save') {
+    // 숨겨진 페이지가 녹화를 마치고 저장할 파일 주소를 보내옴
+    chrome.downloads.download({ url: msg.url, filename: msg.filename, saveAs: false });
+    chrome.storage.session.remove('tabRec');
+    return;
+  }
   if (msg.type === 'getMedia') {
     load().then(media => sendResponse(media[msg.tabId] || []));
     return true;
@@ -100,17 +114,50 @@ const isTikTokCdn = url => {
 async function download(url, filename) {
   if (!isTikTokCdn(url)) return chrome.downloads.download({ url, filename, saveAs: false });
   // 틱톡: 다운로드 API 요청에는 Referer를 붙일 수 없어서, 숨겨진 페이지에서 받아 저장
-  if (!(await chrome.offscreen.hasDocument())) {
-    await chrome.offscreen.createDocument({ url: 'offscreen.html', reasons: ['BLOBS'], justification: '영상 파일 저장' });
-  }
+  await ensureOffscreen();
   const res = await chrome.runtime.sendMessage({ type: 'offscreen-fetch', url });
   if (!res?.ok) throw new Error(res?.error || '받기 실패');
   return chrome.downloads.download({ url: res.url, filename, saveAs: false });
 }
 
-// 저장이 끝나면 숨겨진 페이지를 닫아 메모리 정리
+async function ensureOffscreen() {
+  if (await chrome.offscreen.hasDocument()) return;
+  await chrome.offscreen.createDocument({
+    url: 'offscreen.html', reasons: ['BLOBS', 'USER_MEDIA'], justification: '영상 파일 저장 및 탭 녹화',
+  });
+}
+
+// 저장이 끝나면 숨겨진 페이지를 닫아 메모리 정리 (탭 녹화 중이면 유지)
 chrome.downloads.onChanged.addListener(async d => {
   if (!d.state || d.state.current === 'in_progress') return;
   const [item] = await chrome.downloads.search({ id: d.id });
-  if (item?.url.startsWith('blob:') && (await chrome.offscreen.hasDocument())) chrome.offscreen.closeDocument();
+  const { tabRec } = await chrome.storage.session.get('tabRec');
+  if (item?.url.startsWith('blob:') && !tabRec && (await chrome.offscreen.hasDocument())) chrome.offscreen.closeDocument();
+});
+
+// ── 탭 전체 녹화 ─────────────────────────────────────────
+// 영상 요소 녹화가 막히는 사이트에서도 탭 화면+소리를 그대로 녹화한다.
+// (DRM 영상은 브라우저가 검은 화면으로 내보내므로 녹화되지 않음)
+async function startTabRecording(tabId, streamId, filename) {
+  const { tabRec } = await chrome.storage.session.get('tabRec');
+  if (tabRec) throw new Error('이미 다른 탭을 녹화 중입니다. 먼저 정지해 주세요.');
+  await ensureOffscreen();
+  const res = await chrome.runtime.sendMessage({ type: 'offscreen-tabrec-start', streamId, filename });
+  if (!res?.ok) throw new Error(res?.error || '탭 녹화를 시작하지 못했습니다.');
+  await chrome.storage.session.set({ tabRec: { tabId, startedAt: Date.now() } });
+  chrome.action.setBadgeBackgroundColor({ color: '#e5484d' });
+  chrome.action.setBadgeText({ tabId, text: 'REC' });
+}
+
+async function stopTabRecording() {
+  const { tabRec } = await chrome.storage.session.get('tabRec');
+  if (!tabRec) return;
+  await chrome.storage.session.remove('tabRec');
+  chrome.action.setBadgeText({ tabId: tabRec.tabId, text: '' }).catch(() => {});
+  await chrome.runtime.sendMessage({ type: 'offscreen-tabrec-stop' }).catch(() => {});
+}
+
+chrome.tabs.onRemoved.addListener(async tabId => {
+  const { tabRec } = await chrome.storage.session.get('tabRec');
+  if (tabRec?.tabId === tabId) stopTabRecording();
 });

@@ -27,7 +27,7 @@ async function frameVideos() {
 
 async function send(frameId, msg) {
   const res = await chrome.tabs.sendMessage(tab.id, msg, { frameId }).catch(e => ({ ok: false, error: e.message }));
-  if (res && !res.ok) say(res.error);
+  if (res && !res.ok) say(`${res.error} → 아래 "탭 녹화"를 이용해 보세요.`);
   setTimeout(render, 300);
 }
 
@@ -64,16 +64,44 @@ function fileCard(f) {
 
 async function download(url) {
   const res = await chrome.runtime.sendMessage({ type: 'download', url, filename: `${safeName(tab.title)}.mp4` });
-  say(res?.ok ? '다운로드를 시작했습니다.' : `다운로드 실패: ${res?.error || ''} → "녹화"를 이용해 보세요.`);
+  say(res?.ok ? '다운로드를 시작했습니다.' : `다운로드 실패: ${res?.error || ''} → "탭 녹화"를 이용해 보세요.`);
+}
+
+async function startTabRec() {
+  try {
+    const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id });
+    const res = await chrome.runtime.sendMessage({ type: 'tabrec-start', tabId: tab.id, streamId, filename: safeName(tab.title) });
+    say(res?.ok ? '' : res?.error);
+  } catch (e) {
+    say(`탭 녹화를 시작하지 못했습니다: ${e.message}`);
+  }
+  render();
+}
+
+function renderTabRec(rec) {
+  const box = $('#tabrec');
+  if (rec && rec.tabId === tab.id) {
+    box.replaceChildren(
+      el('span', { className: 'rec', textContent: `● 탭 녹화 중 ${fmtTime((Date.now() - rec.startedAt) / 1000)}` }),
+      el('button', { className: 'primary', textContent: '정지 후 저장',
+        onclick: async () => { await chrome.runtime.sendMessage({ type: 'tabrec-stop' }); say('저장 중입니다…'); setTimeout(render, 800); } }));
+  } else if (rec) {
+    box.replaceChildren(el('span', { className: 'meta', textContent: '다른 탭을 녹화 중입니다.' }),
+      el('button', { textContent: '그 녹화 정지 후 저장', onclick: async () => { await chrome.runtime.sendMessage({ type: 'tabrec-stop' }); setTimeout(render, 800); } }));
+  } else {
+    box.replaceChildren(el('button', { className: 'primary', textContent: '탭 녹화 시작', onclick: startTabRec }));
+  }
 }
 
 async function render() {
-  const [videos, files] = await Promise.all([
+  const [videos, files, rec] = await Promise.all([
     frameVideos(),
     chrome.runtime.sendMessage({ type: 'getMedia', tabId: tab.id }),
+    chrome.runtime.sendMessage({ type: 'tabrec-status' }),
   ]);
+  renderTabRec(rec);
   $('#videos').replaceChildren(...(videos.length ? videos.map(videoCard)
-    : [el('p', { className: 'empty', textContent: '재생 중인 영상이 없습니다. 영상을 먼저 재생해 주세요.' })]));
+    : [el('p', { className: 'empty', textContent: '재생 중인 영상이 없습니다. 영상을 재생하거나 아래 "탭 녹화"를 이용하세요.' })]));
   $('#files').replaceChildren(...(files?.length ? files.map(fileCard)
     : [el('p', { className: 'empty', textContent: '감지된 원본 파일이 없습니다.' })]));
 }
