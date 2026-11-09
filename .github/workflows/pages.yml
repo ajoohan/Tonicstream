@@ -1,0 +1,39 @@
+name: Deploy stream.plustonic.com
+
+on:
+  push:
+    branches: [main]
+    paths: ["docs/**", "extension/**", ".github/workflows/pages.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # 배포할 때마다 extension/ 폴더로 ZIP을 새로 만들어 항상 최신 버전이 내려가게 함
+      - name: Build extension ZIP
+        run: |
+          rm -f docs/tonicstream-extension.zip
+          cd extension && zip -qr ../docs/tonicstream-extension.zip . -x '.*'
+          cd .. && unzip -l docs/tonicstream-extension.zip
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+      - id: deployment
+        uses: actions/deploy-pages@v4
