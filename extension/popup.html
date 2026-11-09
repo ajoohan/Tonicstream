@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <h1>영상 저장</h1>
+    <button id="refresh" title="새로고침">↻</button>
+  </header>
+
+  <section>
+    <h2>화면 녹화 저장 <small>유튜브 쇼츠 · 릴스 · 틱톡 · 대부분의 스트리밍</small></h2>
+    <div id="videos"><p class="empty">불러오는 중…</p></div>
+  </section>
+
+  <section>
+    <h2>탭 전체 녹화 <small>위 방법이 안 될 때 · 어떤 사이트든</small></h2>
+    <div class="card">
+      <div class="meta">이 탭의 화면과 소리를 그대로 녹화합니다. 영상을 전체화면(F)으로 두고 녹화하면 영상만 담깁니다.</div>
+      <div class="row" id="tabrec"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>바로 다운로드 <small>원본 파일이 감지된 경우</small></h2>
+    <div id="files"><p class="empty">불러오는 중…</p></div>
+  </section>
+
+  <p id="msg"></p>
+  <footer>본인이 권리를 가졌거나 허락받은 영상만 저장하세요.</footer>
+  <script src="popup.js"></script>
+</body>
+</html>

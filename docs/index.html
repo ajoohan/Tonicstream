@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0d0d10">
+<title>Tonicstream — 보고 있는 영상을 MP4로</title>
+<meta name="description" content="재생 중인 쇼츠·릴스·틱톡 영상을 클릭 한 번에 MP4로 저장하는 Edge·Chrome 확장 프로그램. by plustonic">
+<meta property="og:title" content="Tonicstream — 보고 있는 영상을 MP4로">
+<meta property="og:description" content="재생 중인 영상을 클릭 한 번에 MP4로.">
+<meta property="og:url" content="https://stream.plustonic.com/">
+<meta property="og:type" content="website">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23ff5a5f'/%3E%3Ccircle cx='16' cy='16' r='6' fill='white'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="fonts/pretendard/pretendardvariable-dynamic-subset.css">
+<style>
+:root {
+  color-scheme: dark;
+  --bg: #0d0d10; --surface: #16161a; --fg: #ededf1; --muted: #8f8f9b; --line: #24242b; --accent: #ff5a5f;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font: 16px/1.6 "Pretendard Variable", Pretendard, -apple-system, system-ui, "Segoe UI", "Malgun Gothic", sans-serif;
+  word-break: keep-all; -webkit-font-smoothing: antialiased;
+}
+a { color: inherit; }
+.wrap { max-width: 880px; margin: 0 auto; padding: 0 20px; }
+
+nav .wrap { display: flex; align-items: center; justify-content: space-between; height: 64px; }
+.logo { display: flex; align-items: center; gap: 10px; font-weight: 700; text-decoration: none; }
+.logo i { width: 24px; height: 24px; border-radius: 7px; background: var(--accent); display: grid; place-items: center; }
+.logo i::after { content: ""; width: 8px; height: 8px; border-radius: 50%; background: #fff; }
+
+.btn { display: inline-block; padding: 14px 26px; border-radius: 12px; font-weight: 600; text-decoration: none; background: var(--accent); color: #fff; }
+.btn:hover { filter: brightness(1.08); }
+
+.hero { text-align: center; padding: 120px 0 100px; }
+h1 { font-size: clamp(38px, 7vw, 64px); line-height: 1.15; letter-spacing: -.035em; margin: 0 0 20px; }
+h1 em { font-style: normal; color: var(--accent); }
+.lead { font-size: 18px; color: var(--muted); margin: 0 0 36px; }
+.meta { font-size: 13px; color: var(--muted); margin-top: 16px; }
+
+.features { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 16px; overflow: hidden; }
+@media (max-width: 720px) { .features { grid-template-columns: 1fr; } .hero { padding: 80px 0 64px; } }
+.features div { background: var(--surface); padding: 28px 24px; }
+.features h3 { margin: 0 0 6px; font-size: 17px; }
+.features p { margin: 0; color: var(--muted); font-size: 15px; }
+
+.install { padding: 96px 0; text-align: center; }
+h2 { font-size: 26px; letter-spacing: -.02em; margin: 0 0 28px; }
+.install ol { list-style: none; padding: 0; margin: 0 auto; max-width: 420px; text-align: left; counter-reset: s; }
+.install li { counter-increment: s; display: flex; gap: 14px; align-items: baseline; padding: 10px 0; color: var(--muted); }
+.install li::before { content: counter(s); flex: none; width: 24px; height: 24px; border-radius: 50%; border: 1px solid var(--line); color: var(--fg); font-size: 13px; font-weight: 600; display: grid; place-items: center; }
+.install b { color: var(--fg); font-weight: 600; }
+code { font: 13px ui-monospace, monospace; color: var(--fg); }
+
+footer { border-top: 1px solid var(--line); padding: 28px 0 40px; color: var(--muted); font-size: 13px; }
+footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+footer a { text-decoration: none; }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <a class="logo" href="./"><i></i>Tonicstream</a>
+  </div>
+</nav>
+
+<main class="wrap">
+  <section class="hero">
+    <h1>보고 있는 영상,<br><em>MP4</em>로 저장.</h1>
+    <p class="lead">쇼츠 · 릴스 · 틱톡 · Vimeo, 클릭 한 번이면 끝.</p>
+    <a class="btn" href="tonicstream-extension.zip" download>무료 다운로드</a>
+    <p class="meta">Edge · Chrome 확장 프로그램 · v0.3.1</p>
+  </section>
+
+  <section class="features">
+    <div><h3>영상 녹화</h3><p>재생 중인 영상을 그대로 저장</p></div>
+    <div><h3>원본 다운로드</h3><p>원본 파일이 있으면 즉시 저장</p></div>
+    <div><h3>탭 녹화</h3><p>어떤 사이트든 화면째로 저장</p></div>
+  </section>
+
+  <section class="install">
+    <h2>설치</h2>
+    <ol>
+      <li><span>ZIP을 <b>다운로드</b>해 압축 풀기</span></li>
+      <li><span><code>edge://extensions</code> 열기</span></li>
+      <li><span><b>개발자 모드</b> 켜기</span></li>
+      <li><span><b>압축 풀린 항목 로드</b> → 폴더 선택</span></li>
+    </ol>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>© 2026 plustonic · 권리를 가진 영상만 저장하세요. DRM 영상은 지원하지 않습니다.</span>
+    <a href="privacy.html">개인정보 처리방침</a>
+  </div>
+</footer>
+
+</body>
+</html>
