@@ -7,7 +7,7 @@
 - 업로드 파일: https://stream.plustonic.com/tonicstream-extension.zip
   - `extension/` 폴더를 압축한 파일로, 배포할 때마다 자동으로 새로 만들어집니다.
   - `manifest.json`이 압축 파일 맨 위에 있어서 그대로 올리면 됩니다.
-- 버전: 0.4.0
+- 버전: 0.4.1
 
 ## 2. 속성 (Properties)
 
