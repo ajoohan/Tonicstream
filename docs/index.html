@@ -10,7 +10,7 @@
 <meta property="og:description" content="재생 중인 영상을 클릭 한 번에 MP4로.">
 <meta property="og:url" content="https://stream.plustonic.com/">
 <meta property="og:type" content="website">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23ff5a5f'/%3E%3Ccircle cx='16' cy='16' r='6' fill='white'/%3E%3C/svg%3E">
+<link rel="icon" href="assets/icon128.png">
 <link rel="stylesheet" href="fonts/pretendard/pretendardvariable-dynamic-subset.css">
 <style>
 :root {
@@ -18,37 +18,108 @@
   --bg: #0d0d10; --surface: #16161a; --fg: #ededf1; --muted: #8f8f9b; --line: #24242b; --accent: #ff5a5f;
 }
 * { box-sizing: border-box; }
+html { overflow-x: hidden; }
 body {
-  margin: 0; background: var(--bg); color: var(--fg);
+  margin: 0; background: var(--bg); color: var(--fg); overflow-x: hidden;
   font: 16px/1.6 "Pretendard Variable", Pretendard, -apple-system, system-ui, "Segoe UI", "Malgun Gothic", sans-serif;
   word-break: keep-all; -webkit-font-smoothing: antialiased;
 }
 a { color: inherit; }
-.wrap { max-width: 880px; margin: 0 auto; padding: 0 20px; }
+.wrap { max-width: 1080px; margin: 0 auto; padding: 0 20px; }
+.narrow { max-width: 880px; }
 
 nav .wrap { display: flex; align-items: center; justify-content: space-between; height: 64px; }
 .logo { display: flex; align-items: center; gap: 10px; font-weight: 700; text-decoration: none; }
-.logo i { width: 24px; height: 24px; border-radius: 7px; background: var(--accent); display: grid; place-items: center; }
-.logo i::after { content: ""; width: 8px; height: 8px; border-radius: 50%; background: #fff; }
+.logo img { width: 26px; height: 26px; }
+.nav-btn { font-size: 14px; font-weight: 600; text-decoration: none; padding: 8px 14px; border: 1px solid var(--line); border-radius: 10px; }
+.nav-btn:hover { border-color: #3a3a44; }
 
-.btn { display: inline-block; padding: 14px 26px; border-radius: 12px; font-weight: 600; text-decoration: none; background: var(--accent); color: #fff; }
+.btn { display: inline-block; padding: 14px 26px; border-radius: 12px; font-weight: 600; text-decoration: none; background: var(--accent); color: #fff; box-shadow: 0 8px 30px -8px rgba(255,90,95,.6); }
 .btn:hover { filter: brightness(1.08); }
 
-.hero { text-align: center; padding: 120px 0 100px; }
+.hero { text-align: center; padding-block: 88px 56px; position: relative; }
+.hero::before { content: ""; position: absolute; inset: -80px 0 auto; height: 520px; z-index: -1;
+  background: radial-gradient(600px 300px at 50% 30%, rgba(255,90,95,.18), transparent 70%); }
 h1 { font-size: clamp(38px, 7vw, 64px); line-height: 1.15; letter-spacing: -.035em; margin: 0 0 20px; }
 h1 em { font-style: normal; color: var(--accent); }
 .lead { font-size: 18px; color: var(--muted); margin: 0 0 36px; }
 .meta { font-size: 13px; color: var(--muted); margin-top: 16px; }
 
+/* ---------- product mockup ---------- */
+.shot { margin: 0 auto 120px; max-width: 1000px; perspective: 1600px; }
+.browser { position: relative; border-radius: 14px; background: #1a1a1f; border: 1px solid #2c2c34;
+  box-shadow: 0 50px 120px -30px rgba(0,0,0,.8), 0 0 0 1px rgba(255,255,255,.02) inset; overflow: hidden; }
+.bar { height: 44px; display: flex; align-items: center; gap: 12px; padding: 0 14px; background: #202026; border-bottom: 1px solid #2c2c34; }
+.dots { display: flex; gap: 7px; }
+.dots i { width: 11px; height: 11px; border-radius: 50%; background: #3a3a43; }
+.url { flex: 1; height: 28px; border-radius: 8px; background: #141418; display: flex; align-items: center; gap: 8px; padding: 0 12px; font-size: 13px; color: #9a9aa6; min-width: 0; }
+.url span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.url svg { flex: none; opacity: .6; }
+.ext { position: relative; width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; background: #2c2c34; flex: none; }
+.ext img { width: 18px; height: 18px; }
+.ext b { position: absolute; top: -3px; right: -5px; background: var(--accent); color: #fff; font-size: 9px; font-weight: 700; padding: 1px 4px; border-radius: 5px; letter-spacing: .02em; }
+
+.viewport { position: relative; height: 600px; background: #0f0f12; display: flex; justify-content: center; align-items: center; }
+
+/* the short */
+.short { position: relative; height: 92%; aspect-ratio: 9/16; border-radius: 16px; overflow: hidden; margin-right: 280px;
+  background: linear-gradient(160deg, #ff7a59, #ff4f7b 45%, #6a5cff); background-size: 200% 200%; animation: hue 8s ease-in-out infinite alternate; }
+@keyframes hue { to { background-position: 100% 100%; } }
+.short::after { content: ""; position: absolute; inset: 0; background: linear-gradient(to top, rgba(0,0,0,.65), transparent 45%, rgba(0,0,0,.15)); }
+.prod { position: absolute; left: 50%; top: 40%; width: 46%; aspect-ratio: 1; transform: translate(-50%,-50%); }
+.prod i { position: absolute; inset: 0; border-radius: 30%; background: rgba(255,255,255,.22); backdrop-filter: blur(4px); animation: float 4s ease-in-out infinite; }
+.prod i:nth-child(2) { inset: 22%; border-radius: 50%; background: rgba(255,255,255,.85); animation-delay: -1s; }
+@keyframes float { 50% { transform: translateY(-8px) rotate(4deg); } }
+.rec { position: absolute; z-index: 2; top: 12px; left: 12px; display: flex; align-items: center; gap: 6px; padding: 4px 9px; border-radius: 999px;
+  background: rgba(0,0,0,.55); font-size: 11px; font-weight: 700; letter-spacing: .04em; }
+.rec::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); animation: blink 1s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+.cap { position: absolute; z-index: 2; left: 14px; right: 50px; bottom: 26px; text-align: left; }
+.cap .ch { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 600; margin-bottom: 6px; }
+.cap .ch i { width: 22px; height: 22px; border-radius: 50%; background: #fff; }
+.cap p { margin: 0; font-size: 13px; line-height: 1.4; }
+.cap strong { display: block; font-size: 19px; letter-spacing: -.02em; margin-bottom: 2px; }
+.side { position: absolute; z-index: 2; right: 10px; bottom: 30px; display: grid; gap: 14px; justify-items: center; font-size: 10px; font-weight: 600; }
+.side svg { width: 26px; height: 26px; display: block; margin: 0 auto 2px; }
+.prog { position: absolute; z-index: 2; left: 0; right: 0; bottom: 0; height: 3px; background: rgba(255,255,255,.25); }
+.prog::after { content: ""; display: block; height: 100%; width: 0; background: #fff; animation: prog 12s linear infinite; }
+@keyframes prog { to { width: 100%; } }
+
+/* popup screenshot */
+.popup { position: absolute; top: 8px; right: 18px; width: 300px; border-radius: 12px; border: 1px solid #33333a; overflow: hidden;
+  box-shadow: 0 30px 80px -10px rgba(0,0,0,.9); }
+.popup img { display: block; width: 100%; height: auto; }
+
+/* download toast */
+.toast { position: absolute; right: 18px; bottom: 22px; width: 300px; display: flex; align-items: center; gap: 12px; padding: 12px 16px 12px 12px; border-radius: 12px;
+  background: #222228; border: 1px solid #33333a; box-shadow: 0 20px 50px -10px rgba(0,0,0,.8); font-size: 13px;
+  animation: toast 6s ease-in-out infinite; }
+.toast .ic { width: 34px; height: 34px; border-radius: 9px; background: rgba(70,200,120,.15); color: #46c878; display: grid; place-items: center; flex: none; }
+.toast b { display: block; font-weight: 600; }
+.toast small { color: var(--muted); }
+@keyframes toast { 0%, 45% { opacity: 0; transform: translateY(10px); } 55%, 95% { opacity: 1; transform: none; } 100% { opacity: 0; } }
+
+.caption { text-align: center; color: var(--muted); font-size: 13px; margin-top: 16px; }
+
+@media (max-width: 820px) {
+  .viewport { height: auto; padding: 18px 14px; flex-direction: column; gap: 14px; }
+  .short { height: auto; width: 64%; margin: 0; }
+  .popup, .toast { position: relative; top: auto; right: auto; bottom: auto; left: auto; width: 100%; }
+  .toast { animation: none; }
+  .url { font-size: 12px; }
+}
+
+/* ---------- features ---------- */
 .features { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 16px; overflow: hidden; }
-@media (max-width: 720px) { .features { grid-template-columns: 1fr; } .hero { padding: 80px 0 64px; } }
 .features div { background: var(--surface); padding: 28px 24px; }
+.features .n { display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: 9px; background: rgba(255,90,95,.12); color: var(--accent); margin-bottom: 14px; }
 .features h3 { margin: 0 0 6px; font-size: 17px; }
 .features p { margin: 0; color: var(--muted); font-size: 15px; }
+@media (max-width: 720px) { .features { grid-template-columns: 1fr; } .hero { padding-block: 64px 40px; } .shot { margin-bottom: 80px; } }
 
-.install { padding: 96px 0; text-align: center; }
+.install { padding-block: 96px; text-align: center; }
 h2 { font-size: 26px; letter-spacing: -.02em; margin: 0 0 28px; }
-.install ol { list-style: none; padding: 0; margin: 0 auto; max-width: 420px; text-align: left; counter-reset: s; }
+.install ol { list-style: none; padding: 0; margin: 0 auto 32px; max-width: 420px; text-align: left; counter-reset: s; }
 .install li { counter-increment: s; display: flex; gap: 14px; align-items: baseline; padding: 10px 0; color: var(--muted); }
 .install li::before { content: counter(s); flex: none; width: 24px; height: 24px; border-radius: 50%; border: 1px solid var(--line); color: var(--fg); font-size: 13px; font-weight: 600; display: grid; place-items: center; }
 .install b { color: var(--fg); font-weight: 600; }
@@ -57,31 +128,73 @@ code { font: 13px ui-monospace, monospace; color: var(--fg); }
 footer { border-top: 1px solid var(--line); padding: 28px 0 40px; color: var(--muted); font-size: 13px; }
 footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 footer a { text-decoration: none; }
+
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; } .toast { opacity: 1; } }
 </style>
 </head>
 <body>
 
 <nav>
   <div class="wrap">
-    <a class="logo" href="./"><i></i>Tonicstream</a>
+    <a class="logo" href="./"><img src="assets/icon128.png" alt="">Tonicstream</a>
+    <a class="nav-btn" href="tonicstream-extension.zip" download>다운로드</a>
   </div>
 </nav>
 
-<main class="wrap">
-  <section class="hero">
+<main>
+  <section class="hero wrap narrow">
     <h1>보고 있는 영상,<br><em>MP4</em>로 저장.</h1>
     <p class="lead">쇼츠 · 릴스 · 틱톡 · Vimeo, 클릭 한 번이면 끝.</p>
     <a class="btn" href="tonicstream-extension.zip" download>무료 다운로드</a>
-    <p class="meta">Edge · Chrome 확장 프로그램 · v0.3.1</p>
+    <p class="meta">Edge · Chrome 확장 프로그램 · v0.4.0</p>
   </section>
 
-  <section class="features">
-    <div><h3>영상 녹화</h3><p>재생 중인 영상을 그대로 저장</p></div>
-    <div><h3>원본 다운로드</h3><p>원본 파일이 있으면 즉시 저장</p></div>
-    <div><h3>탭 녹화</h3><p>어떤 사이트든 화면째로 저장</p></div>
+  <section class="wrap">
+    <figure class="shot" aria-label="Tonicstream으로 재생 중인 숏폼 영상을 녹화해 저장하는 화면">
+      <div class="browser">
+        <div class="bar">
+          <div class="dots"><i></i><i></i><i></i></div>
+          <div class="url">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+            <span>video.example.com/shorts/fall-collection</span>
+          </div>
+          <div class="ext"><img src="assets/icon128.png" alt=""><b>REC</b></div>
+        </div>
+        <div class="viewport">
+          <div class="short">
+            <span class="rec">REC</span>
+            <div class="prod"><i></i><i></i></div>
+            <div class="side">
+              <div><svg viewBox="0 0 24 24" fill="#fff"><path d="M12 21s-7.5-4.6-9.5-9.2C1 8.3 3.2 5 6.6 5c2 0 3.4 1.1 4.4 2.5C12 6.1 13.4 5 15.4 5 18.8 5 21 8.3 19.5 11.8 17.5 16.4 12 21 12 21z"/></svg>2.4만</div>
+              <div><svg viewBox="0 0 24 24" fill="#fff"><path d="M4 5h16v11H8l-4 4z"/></svg>318</div>
+              <div><svg viewBox="0 0 24 24" fill="#fff"><path d="M14 4l7 7-7 7v-4c-6 0-9 2-11 6 1-6 4-11 11-12z"/></svg>공유</div>
+            </div>
+            <div class="cap">
+              <div class="ch"><i></i>@yourbrand</div>
+              <p><strong>가을 신상 첫 공개</strong>단 3일, 한정 수량으로 만나보세요</p>
+            </div>
+            <div class="prog"></div>
+          </div>
+          <div class="popup"><img src="assets/popup-rec.webp" width="720" height="902" alt="Tonicstream 확장 프로그램 창: 녹화 중 0:03, 정지 후 저장 버튼"></div>
+          <div class="toast">
+            <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 12l5 5 9-10"/></svg></div>
+            <div><b>가을 신상 첫 공개.mp4</b><small>저장 완료 · 1080×1920 · 12.4MB</small></div>
+          </div>
+        </div>
+      </div>
+      <figcaption class="caption">재생 중인 영상을 그대로 녹화해 MP4 파일로 저장합니다.</figcaption>
+    </figure>
   </section>
 
-  <section class="install">
+  <section class="wrap narrow">
+    <div class="features">
+      <div><span class="n">1</span><h3>영상 녹화</h3><p>재생 중인 영상을 그대로 저장</p></div>
+      <div><span class="n">2</span><h3>원본 다운로드</h3><p>원본 파일이 있으면 즉시 저장</p></div>
+      <div><span class="n">3</span><h3>탭 녹화</h3><p>어떤 사이트든 화면째로 저장</p></div>
+    </div>
+  </section>
+
+  <section class="install wrap narrow">
     <h2>설치</h2>
     <ol>
       <li><span>ZIP을 <b>다운로드</b>해 압축 풀기</span></li>
@@ -89,11 +202,12 @@ footer a { text-decoration: none; }
       <li><span><b>개발자 모드</b> 켜기</span></li>
       <li><span><b>압축 풀린 항목 로드</b> → 폴더 선택</span></li>
     </ol>
+    <a class="btn" href="tonicstream-extension.zip" download>무료 다운로드</a>
   </section>
 </main>
 
 <footer>
-  <div class="wrap">
+  <div class="wrap narrow">
     <span>© 2026 plustonic · 권리를 가진 영상만 저장하세요. DRM 영상은 지원하지 않습니다.</span>
     <a href="privacy.html">개인정보 처리방침</a>
   </div>

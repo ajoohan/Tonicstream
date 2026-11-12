@@ -70,8 +70,8 @@ extension/
 ## 소개 페이지 (stream.plustonic.com)
 
 `docs/` 폴더가 소개 페이지입니다 (`index.html`, `privacy.html`, 설치용 `tonicstream-extension.zip`).
-확장 프로그램을 수정한 뒤에는 ZIP을 다시 만들어 주세요:
+main에 푸시하면 GitHub Actions(`.github/workflows/pages.yml`)가 `extension/`으로 ZIP을 새로 만들어 자동 배포합니다.
 
-```
-cd extension && rm -f ../docs/tonicstream-extension.zip && zip -qr ../docs/tonicstream-extension.zip . -x '.*'
-```
+## Edge 추가 기능 스토어
+
+제출용 설명 문구, 권한 설명, 이미지는 `store/` 폴더에 있습니다. 제출 순서는 `store/README.md`를 보세요.
