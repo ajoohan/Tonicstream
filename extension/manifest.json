@@ -1,8 +1,14 @@
 {
   "manifest_version": 3,
   "name": "Tonicstream 영상 저장",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "브라우저에서 재생 중인 영상(쇼츠·릴스·틱톡 등)을 MP4로 저장합니다.",
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
   "permissions": [
     "webRequest",
     "declarativeNetRequest",
@@ -21,7 +27,11 @@
   },
   "action": {
     "default_popup": "popup.html",
-    "default_title": "영상 저장"
+    "default_title": "영상 저장",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png"
+    }
   },
   "content_scripts": [
     {
