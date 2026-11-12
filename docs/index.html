@@ -11,6 +11,7 @@
 <meta property="og:url" content="https://stream.plustonic.com/">
 <meta property="og:type" content="website">
 <link rel="icon" href="assets/icon128.png">
+<link rel="preload" as="image" href="assets/short.webp">
 <link rel="stylesheet" href="fonts/pretendard/pretendardvariable-dynamic-subset.css">
 <style>
 :root {
@@ -62,14 +63,11 @@ h1 em { font-style: normal; color: var(--accent); }
 .viewport { position: relative; height: 600px; background: #0f0f12; display: flex; justify-content: center; align-items: center; }
 
 /* the short */
-.short { position: relative; height: 92%; aspect-ratio: 9/16; border-radius: 16px; overflow: hidden; margin-right: 330px;
-  background: linear-gradient(160deg, #ff7a59, #ff4f7b 45%, #6a5cff); background-size: 200% 200%; animation: hue 8s ease-in-out infinite alternate; }
-@keyframes hue { to { background-position: 100% 100%; } }
-.short::after { content: ""; position: absolute; inset: 0; background: linear-gradient(to top, rgba(0,0,0,.65), transparent 45%, rgba(0,0,0,.15)); }
-.prod { position: absolute; left: 50%; top: 40%; width: 46%; aspect-ratio: 1; transform: translate(-50%,-50%); }
-.prod i { position: absolute; inset: 0; border-radius: 30%; background: rgba(255,255,255,.22); backdrop-filter: blur(4px); animation: float 4s ease-in-out infinite; }
-.prod i:nth-child(2) { inset: 22%; border-radius: 50%; background: rgba(255,255,255,.85); animation-delay: -1s; }
-@keyframes float { 50% { transform: translateY(-8px) rotate(4deg); } }
+.short { position: relative; height: 92%; aspect-ratio: 9/16; border-radius: 16px; overflow: hidden; margin-right: 330px; background: #2a2a30; }
+.short .frame { position: absolute; inset: 0; background: url(assets/short.webp) center 30% / cover no-repeat; transform-origin: 50% 35%;
+  animation: kb 14s ease-in-out infinite alternate; }
+@keyframes kb { from { transform: scale(1.02) translateY(0); } to { transform: scale(1.12) translateY(-2%); } }
+.short::after { content: ""; position: absolute; inset: 0; background: linear-gradient(to top, rgba(0,0,0,.72), transparent 42%, transparent 80%, rgba(0,0,0,.25)); }
 .rec { position: absolute; z-index: 2; top: 12px; left: 12px; display: flex; align-items: center; gap: 6px; padding: 4px 9px; border-radius: 999px;
   background: rgba(0,0,0,.55); font-size: 11px; font-weight: 700; letter-spacing: .04em; }
 .rec::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); animation: blink 1s steps(1) infinite; }
@@ -163,7 +161,7 @@ footer a { text-decoration: none; }
         <div class="viewport">
           <div class="short">
             <span class="rec">REC</span>
-            <div class="prod"><i></i><i></i></div>
+            <div class="frame" role="img" aria-label="가을 트렌치코트를 입은 모델이 도심 거리를 걷는 숏폼 영상 장면"></div>
             <div class="side">
               <div><svg viewBox="0 0 24 24" fill="#fff"><path d="M12 21s-7.5-4.6-9.5-9.2C1 8.3 3.2 5 6.6 5c2 0 3.4 1.1 4.4 2.5C12 6.1 13.4 5 15.4 5 18.8 5 21 8.3 19.5 11.8 17.5 16.4 12 21 12 21z"/></svg>2.4만</div>
               <div><svg viewBox="0 0 24 24" fill="#fff"><path d="M4 5h16v11H8l-4 4z"/></svg>318</div>
@@ -171,14 +169,14 @@ footer a { text-decoration: none; }
             </div>
             <div class="cap">
               <div class="ch"><i></i>@yourbrand</div>
-              <p><strong>가을 신상 첫 공개</strong>단 3일, 한정 수량으로 만나보세요</p>
+              <p><strong>가을 트렌치 첫 공개</strong>도심 위의 데일리 룩, 지금 만나보세요</p>
             </div>
             <div class="prog"></div>
           </div>
           <div class="popup"><img src="assets/popup-rec.webp" width="720" height="902" alt="Tonicstream 확장 프로그램 창: 녹화 중 0:03, 정지 후 저장 버튼"></div>
           <div class="toast">
             <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 12l5 5 9-10"/></svg></div>
-            <div><b>가을 신상 첫 공개.mp4</b><small>저장 완료 · 1080×1920 · 12.4MB</small></div>
+            <div><b>가을 트렌치 첫 공개.mp4</b><small>저장 완료 · 1080×1920 · 12.4MB</small></div>
           </div>
         </div>
       </div>
