@@ -102,7 +102,35 @@ function renderTabRec(rec) {
   }
 }
 
+// ── 화면 녹화: 별도 창(recorder.html)에서 진행 ──
+const RECORDER_URL = chrome.runtime.getURL('recorder.html');
+
+async function openRecorder() {
+  const [existing] = await chrome.runtime.getContexts({ contextTypes: ['TAB'], documentUrls: [RECORDER_URL] });
+  if (existing) await chrome.windows.update(existing.windowId, { state: 'normal', focused: true });
+  else await chrome.windows.create({ url: RECORDER_URL, type: 'popup', width: 400, height: 380, focused: true });
+  window.close();
+}
+
+async function renderScreenRec() {
+  const { screenRec } = await chrome.storage.session.get('screenRec');
+  const box = $('#screenrec');
+  if (screenRec) {
+    box.replaceChildren(
+      el('span', { className: 'rec', textContent: `● 화면 녹화 중 ${fmtTime((Date.now() - screenRec.startedAt) / 1000)}` }),
+      el('button', { className: 'primary', textContent: '정지 후 저장', onclick: async () => {
+        const res = await chrome.runtime.sendMessage({ type: 'screenrec-stop' }).catch(() => null);
+        if (!res?.recording) await chrome.storage.session.remove('screenRec'); // 녹화 창이 이미 사라진 경우 표시만 정리
+        say('저장 중입니다…'); setTimeout(renderScreenRec, 800);
+      } }),
+      el('button', { textContent: '녹화 창 보기', onclick: openRecorder }));
+  } else {
+    box.replaceChildren(el('button', { className: 'primary', textContent: '화면 녹화 시작', onclick: openRecorder }));
+  }
+}
+
 async function render() {
+  renderScreenRec();
   const [videos, files, rec] = await Promise.all([
     frameVideos(),
     chrome.runtime.sendMessage({ type: 'getMedia', tabId: tab.id }),
@@ -118,7 +146,14 @@ async function render() {
 (async () => {
   [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id || !/^https?:|^file:/.test(tab.url || '')) {
-    say('이 페이지에서는 사용할 수 없습니다. 영상이 있는 웹페이지에서 열어주세요.');
+    // 새 탭·설정 화면 등에서는 화면 녹화만 쓸 수 있다
+    await renderScreenRec();
+    const note = '이 페이지에는 저장할 영상이 없습니다. 화면 녹화는 사용할 수 있습니다.';
+    $('#videos').replaceChildren(el('p', { className: 'empty', textContent: note }));
+    $('#files').replaceChildren(el('p', { className: 'empty', textContent: '감지된 원본 파일이 없습니다.' }));
+    $('#tabrec').replaceChildren(el('span', { className: 'meta', textContent: '웹페이지에서만 쓸 수 있습니다.' }));
+    $('#refresh').onclick = renderScreenRec;
+    setInterval(() => { if (document.querySelector('.rec')) renderScreenRec(); }, 1000);
     return;
   }
   $('#refresh').onclick = () => { $('#refresh').dataset.force = '1'; render(); };

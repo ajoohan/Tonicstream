@@ -7,7 +7,7 @@
 - 업로드 파일: https://stream.plustonic.com/tonicstream-extension.zip
   - `extension/` 폴더를 압축한 파일로, 배포할 때마다 자동으로 새로 만들어집니다.
   - `manifest.json`이 압축 파일 맨 위에 있어서 그대로 올리면 됩니다.
-- 버전: 0.4.1
+- 버전: 0.5.0
 
 ## 2. 속성 (Properties)
 
@@ -30,10 +30,11 @@
 ```
 Tonicstream은 브라우저에서 재생 중인 영상을 MP4 파일로 저장하는 확장 프로그램입니다.
 
-■ 세 가지 저장 방법
+■ 네 가지 저장 방법
 • 영상 녹화: 페이지에서 재생 중인 영상을 그대로 녹화해 MP4로 저장합니다. 처음부터 끝까지, 또는 지금부터 녹화할 수 있습니다.
 • 원본 다운로드: 페이지가 불러온 원본 영상 파일이 감지되면 바로 내려받습니다.
 • 탭 녹화: 다른 방법이 안 되는 사이트에서도 탭의 화면과 소리를 그대로 녹화합니다.
+• 화면 녹화: 모니터 전체나 다른 프로그램 창을 녹화합니다. 컴퓨터 소리와 마이크 소리를 함께 담을 수 있습니다.
 
 ■ 이렇게 사용하세요
 1. 영상이 있는 페이지에서 툴바의 Tonicstream 아이콘을 누릅니다. (단축키 Alt+Shift+V)
@@ -59,10 +60,11 @@ Save videos playing in your browser — shorts, reels, TikTok, Vimeo — as MP4 
 ```
 Tonicstream saves the video you are watching in your browser as an MP4 file.
 
-■ Three ways to save
+■ Four ways to save
 • Record video: records the playing video element and saves it as MP4 — from the start or from now.
 • Direct download: when the page loads an original video file, download it as is.
 • Tab recording: records the tab's picture and sound for sites where the other methods don't work.
+• Screen recording: records your entire screen or another app window, with system and microphone audio.
 
 ■ How to use
 1. On a page with a video, click the Tonicstream icon (shortcut Alt+Shift+V).
@@ -99,6 +101,7 @@ Permission justifications:
 - declarativeNetRequest: adds a Referer header only for requests made by the extension itself (tabIds -1) to the TikTok CDN, which rejects downloads without it.
 - downloads: save the resulting MP4 file.
 - tabCapture + offscreen: "Tab recording" feature, started only by an explicit user click in the popup; the offscreen document runs MediaRecorder and fetches files for download.
+- Screen recording (no extra permission): the user clicks a button in the extension's own recorder window, which calls navigator.mediaDevices.getDisplayMedia so the user picks the screen/window/tab in the browser's picker. The microphone is used only if the user ticks "record microphone". The file is saved locally with downloads.
 - scripting + activeTab: inject the content script into frames that loaded before installation when the user opens the popup.
 - storage: keep the list of detected files per tab for the current session (chrome.storage.session).
 
