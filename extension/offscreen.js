@@ -61,8 +61,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true;
   }
   if (msg.type === 'offscreen-tabrec-stop') {
-    const recording = !!tabRec && tabRec.recorder.state !== 'inactive';
-    if (recording) tabRec.recorder.stop();
+    // tabRec은 저장 준비가 끝나는 onstop에서 비워진다. 그 전까지는(정지 처리 중 포함) 녹화 중으로 답해야
+    // 배경이 상태를 먼저 지워 이 페이지를 닫아 버리지 않는다.
+    const recording = !!tabRec;
+    if (recording && tabRec.recorder.state !== 'inactive') tabRec.recorder.stop();
     sendResponse({ ok: true, recording });
   }
 });
