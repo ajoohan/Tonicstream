@@ -8,7 +8,7 @@
 <body>
   <header>
     <h1>영상 저장</h1>
-    <button id="refresh" title="새로고침">↻</button>
+    <span class="hbtns"><button id="library" title="저장한 영상 기록 보기">보관함</button><button id="refresh" title="새로고침">↻</button></span>
   </header>
 
   <section>
@@ -49,6 +49,7 @@
         </select>
       </label>
       <div class="meta" id="nm-preview"></div>
+      <label class="check"><input id="nm-library" type="checkbox"> 저장할 때 보관함에 기록 <small>이 브라우저에만 저장됩니다</small></label>
     </div>
   </details>
 
