@@ -1,0 +1,62 @@
+<template>
+  <style>
+@font-face { font-family: "Pretendard Variable"; font-weight: 45 920; font-display: block; src: url('assets/fonts/PretendardVariable.woff2') format('woff2-variations'); }
+#root { position: absolute; inset: 0; color: #ededf1; font-family: "Pretendard Variable", sans-serif; word-break: keep-all; }
+.layer { position: absolute; inset: 0; }
+.copy { position: absolute; left: 130px; top: 0; width: 800px; height: 1080px; display: flex; flex-direction: column; justify-content: center; }
+.chip { align-self: flex-start; font-size: 30px; font-weight: 700; color: #ff5a5f; background: rgba(255,90,95,.12); border: 2px solid rgba(255,90,95,.35); padding: 10px 24px; border-radius: 999px; margin-bottom: 34px; letter-spacing: -.01em; }
+h1 { margin: 0; font-size: 98px; line-height: 1.14; font-weight: 800; letter-spacing: -.045em; }
+h1 em { font-style: normal; color: #ff5a5f; }
+h1 .w { display: inline-block; }
+.sub { margin-top: 34px; font-size: 40px; font-weight: 500; color: #a1a1ac; letter-spacing: -.02em; }
+.stage { position: absolute; left: 960px; top: 0; width: 960px; height: 1080px; }
+.phone { position: absolute; width: 450px; height: 800px; border-radius: 40px; overflow: hidden; border: 2px solid #2c2c34; box-shadow: 0 40px 100px rgba(0,0,0,.6); background: #111; }
+.phone .img { position: absolute; inset: 0; background: url('assets/short.jpg') center/cover; }
+.pill { position: absolute; background: #e5484d; color: #fff; font-weight: 700; font-size: 29px; padding: 8px 18px; border-radius: 999px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.brand { display: flex; align-items: center; gap: 18px; font-size: 38px; font-weight: 700; margin-bottom: 44px; letter-spacing: -.02em; }
+.brand img { width: 64px; height: 64px; }
+#intro-phone { left: 120px; top: 140px; }
+#intro-pill { left: 150px; top: 172px; }
+#intro-popup { position: absolute; left: 470px; top: 330px; width: 430px; border-radius: 22px; border: 2px solid #2c2c34; box-shadow: 0 40px 90px rgba(0,0,0,.7); overflow: hidden; }
+#intro-popup img { display: block; width: 100%; }
+
+  </style>
+  <div id="root" data-composition-id="intro" data-width="1920" data-height="1080">
+
+    <div id="intro-copy" class="clip layer" data-start="0" data-duration="3.2" data-track-index="1">
+      <div class="copy" id="intro-copy-in">
+        <div class="brand" id="intro-brand"><img src="assets/icon.png" alt="">Tonicstream</div>
+        <h1><span class="w iw">보고</span> <span class="w iw">있는</span> <span class="w iw">영상,</span><br><span class="w iw"><em>MP4</em>로</span> <span class="w iw">저장.</span></h1>
+        <div class="sub" id="intro-sub">쇼츠·릴스·틱톡부터 화면 녹화까지</div>
+      </div>
+    </div>
+    <div id="intro-stage" class="clip layer" data-start="0" data-duration="3.2" data-track-index="2">
+      <div class="stage" id="intro-stage-in">
+        <div class="phone" id="intro-phone"><div class="img" id="intro-img"></div></div>
+        <div class="pill" id="intro-pill">● REC <span id="intro-time">0:00</span></div>
+        <div id="intro-popup"><img src="assets/popup-top.png" alt=""></div>
+      </div>
+    </div>
+
+  </div>
+  <script>
+    (() => {
+      const tl = gsap.timeline({ paused: true });
+      const mmss = s => Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0');
+
+      tl.fromTo('#intro-brand', { opacity: 0, filter: 'blur(8px)' }, { opacity: 1, filter: 'blur(0px)', duration: 0.2, ease: 'power4.out' }, 0.1);
+      tl.fromTo('.iw', { opacity: 0, filter: 'blur(6px)' }, { opacity: 1, filter: 'blur(0px)', duration: 0.14, stagger: 0.07, ease: 'power2.out' }, 0.3);
+      tl.fromTo('#intro-sub', { opacity: 0 }, { opacity: 1, duration: 0.3, ease: 'power2.out' }, 0.85);
+      tl.fromTo('#intro-phone', { opacity: 0, y: 90, scale: 0.94 }, { opacity: 1, y: 0, scale: 1, duration: 0.7, ease: 'expo.out' }, 0.15);
+      tl.fromTo('#intro-img', { scale: 1.14 }, { scale: 1.02, duration: 3.1, ease: 'none' }, 0.1);
+      tl.fromTo('#intro-pill', { opacity: 0, scale: 0.6 }, { opacity: 1, scale: 1, duration: 0.3, ease: 'back.out(1.6)' }, 1.0);
+      const c = { v: 0 };
+      tl.to(c, { v: 3, duration: 2.0, ease: 'none', onUpdate: () => { document.getElementById('intro-time').textContent = mmss(c.v); } }, 1.0);
+      tl.fromTo('#intro-popup', { opacity: 0, x: 120, filter: 'blur(14px)' }, { opacity: 1, x: 0, filter: 'blur(0px)', duration: 0.55, ease: 'expo.out' }, 1.35);
+      tl.to(['#intro-copy-in', '#intro-stage-in'], { opacity: 0, filter: 'blur(10px)', duration: 0.22, ease: 'power3.in' }, 2.95);
+
+      window.__timelines["intro"] = tl;
+    })();
+  </script>
+</template>
