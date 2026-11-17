@@ -117,7 +117,7 @@ async function download(url, type = '', v = null) {
   try { fromUrl = new URL(url).pathname.match(/\.(mp4|webm|mov)$/i)?.[1].toLowerCase() || ''; } catch {}
   const fromType = { 'video/webm': 'webm', 'video/quicktime': 'mov', 'video/mp4': 'mp4' }[type.split(';')[0]] || '';
   const ext = fromUrl || fromType || 'mp4';
-  const res = await chrome.runtime.sendMessage({ type: 'download', url, title: tab.title, pageUrl: tab.url, ext, thumb });
+  const res = await chrome.runtime.sendMessage({ type: 'download', url, title: tab.title, pageUrl: tab.url, ext, thumb, incognito: tab.incognito });
   say(res?.ok ? '다운로드를 시작했습니다.' : `다운로드 실패: ${res?.error || ''} → "탭 녹화"를 이용해 보세요.`);
 }
 

@@ -109,10 +109,15 @@ if (!window.__tonicstream) {
   }
 
   // range: { from, to } 초 단위. 주어지면 그 구간만 녹화한다.
+  const starting = new Set(); // 시작 준비 중(되감기·재생 대기)인 영상
   async function startRecording(id, fromStart, title, range) {
+    if (recs.has(id) || starting.has(id)) return; // 버튼을 연달아 눌러도 한 번만 시작
+    starting.add(id);
+    try { await beginRecording(id, fromStart, title, range); } finally { starting.delete(id); }
+  }
+  async function beginRecording(id, fromStart, title, range) {
     const v = findVideo(id);
     if (!v) throw new Error('영상을 찾을 수 없습니다. 창을 새로고침(↻) 해주세요.');
-    if (recs.has(id)) return;
     if (adShowing()) {
       throw new Error('유튜브 광고가 재생 중입니다. 광고가 끝난 뒤 다시 눌러주세요.');
     }
