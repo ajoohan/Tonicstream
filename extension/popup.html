@@ -37,8 +37,24 @@
     <div id="files"><p class="empty">불러오는 중…</p></div>
   </section>
 
+  <details id="naming">
+    <summary>저장 설정 <small>폴더 · 파일 이름</small></summary>
+    <div class="card">
+      <label>저장 폴더 <input id="nm-folder" type="text" placeholder="비워 두면 다운로드 폴더에 바로 저장" spellcheck="false"></label>
+      <label>파일 이름
+        <select id="nm-pattern">
+          <option value="title">제목</option>
+          <option value="date_title">날짜_제목</option>
+          <option value="date_site_title">날짜_사이트_제목</option>
+        </select>
+      </label>
+      <div class="meta" id="nm-preview"></div>
+    </div>
+  </details>
+
   <p id="msg"></p>
   <footer>본인이 권리를 가졌거나 허락받은 영상만 저장하세요.</footer>
+  <script src="naming.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

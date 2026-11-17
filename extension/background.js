@@ -1,3 +1,5 @@
+importScripts('naming.js');
+
 // 탭별로 네트워크에서 지나가는 "완전한 영상 파일" 주소를 모아 둔다.
 // 유튜브처럼 조각(세그먼트)으로 나눠 스트리밍하는 영상은 여기서 잡히지 않으며,
 // 팝업의 "녹화 저장"으로 처리한다.
@@ -91,7 +93,7 @@ chrome.webRequest.onBeforeRequest.addListener(
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === 'tabrec-start') {
-    startTabRecording(msg.tabId, msg.streamId, msg.filename)
+    startTabRecording(msg.tabId, msg.streamId, msg.title, msg.pageUrl)
       .then(() => sendResponse({ ok: true }))
       .catch(e => sendResponse({ ok: false, error: e.message }));
     return true;
@@ -108,9 +110,14 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return;
   }
   if (msg.type === 'save-blob') {
-    chrome.downloads.download({ url: msg.url, filename: msg.filename, saveAs: false })
+    buildName(msg.title, _sender.tab?.url || _sender.url, msg.ext, { suffix: msg.suffix })
+      .then(filename => chrome.downloads.download({ url: msg.url, filename, saveAs: false }))
       .then(id => sendResponse({ ok: true, id }))
       .catch(e => sendResponse({ ok: false, error: e.message }));
+    return true;
+  }
+  if (msg.type === 'shot-tab') {
+    shotTab(msg).then(() => sendResponse({ ok: true })).catch(e => sendResponse({ ok: false, error: e.message }));
     return true;
   }
   if (msg.type === 'getMedia') {
@@ -118,7 +125,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true;
   }
   if (msg.type === 'download') {
-    download(msg.url, msg.filename)
+    buildName(msg.title, msg.pageUrl, msg.ext).then(filename => download(msg.url, filename))
       .then(id => sendResponse({ ok: true, id }))
       .catch(e => sendResponse({ ok: false, error: e.message }));
     return true;
@@ -177,7 +184,8 @@ chrome.downloads.onChanged.addListener(d => {
 // ── 탭 전체 녹화 ─────────────────────────────────────────
 // 영상 요소 녹화가 막히는 사이트에서도 탭 화면+소리를 그대로 녹화한다.
 // (DRM 영상은 브라우저가 검은 화면으로 내보내므로 녹화되지 않음)
-async function startTabRecording(tabId, streamId, filename) {
+async function startTabRecording(tabId, streamId, title, pageUrl) {
+  const filename = await buildName(title, pageUrl); // 확장자는 녹화가 끝난 뒤 붙는다
   const { tabRec } = await chrome.storage.session.get('tabRec');
   if (tabRec) throw new Error('이미 다른 탭을 녹화 중입니다. 먼저 정지해 주세요.');
   await ensureOffscreen();
@@ -308,3 +316,29 @@ async function stopFromAction(tab) {
   chrome.action.openPopup().catch(() => {});
 }
 chrome.action.onClicked.addListener(stopFromAction);
+
+// ── 장면 캡처(스크린샷) 예비 방법 ─────────────────────────
+// 다른 도메인에서 불러온 영상은 페이지 안에서 그림으로 꺼낼 수 없어서,
+// 보이는 탭 화면을 찍은 뒤 영상 위치만 잘라 저장한다.
+async function shotTab({ tabId, windowId, rect, vw, title, pageUrl, suffix }) {
+  // 찍히는 것은 창에서 지금 보이는 탭이므로, 대상 탭이 맞는지 먼저 확인
+  const [active] = await chrome.tabs.query({ active: true, windowId });
+  if (tabId != null && active?.id !== tabId) throw new Error('영상이 있는 탭이 화면에 보이지 않습니다.');
+  let dataUrl = await chrome.tabs.captureVisibleTab(windowId, { format: 'png' });
+  if (rect) {
+    const img = await createImageBitmap(await (await fetch(dataUrl)).blob());
+    const dpr = vw ? img.width / vw : 1; // 찍힌 그림과 페이지 좌표의 비율 (화면 배율·확대/축소 반영)
+    const x = Math.max(0, Math.round(rect.x * dpr)), y = Math.max(0, Math.round(rect.y * dpr));
+    const w = Math.min(img.width - x, Math.round(rect.w * dpr)), h = Math.min(img.height - y, Math.round(rect.h * dpr));
+    if (w > 8 && h > 8) {
+      const c = new OffscreenCanvas(w, h);
+      c.getContext('2d').drawImage(img, x, y, w, h, 0, 0, w, h);
+      const bytes = new Uint8Array(await (await c.convertToBlob({ type: 'image/png' })).arrayBuffer());
+      let bin = '';
+      for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+      dataUrl = `data:image/png;base64,${btoa(bin)}`;
+    }
+  }
+  const filename = await buildName(title, pageUrl, 'png', { suffix });
+  await chrome.downloads.download({ url: dataUrl, filename, saveAs: false });
+}

@@ -3,7 +3,6 @@ let tab;
 
 const fmtTime = s => s == null ? '라이브' : `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 const fmtSize = b => !b ? '크기 알 수 없음' : b > 1e6 ? `${(b / 1e6).toFixed(1)}MB` : `${Math.round(b / 1e3)}KB`;
-const safeName = s => (s || 'video').replace(/[\\/:*?"<>|~\u0000-\u001f]+/g, ' ').replace(/^[.\s]+|[.\s]+$/g, '').slice(0, 80) || 'video';
 const say = t => { $('#msg').textContent = t || ''; };
 
 function el(tag, props = {}, ...kids) {
@@ -59,7 +58,19 @@ function videoCard(v, i) {
       row.append(el('button', { textContent: '바로 다운로드', onclick: () => download(v.directSrc) }));
     }
   }
+  row.append(el('button', { textContent: '장면 캡처', title: '지금 보이는 장면을 PNG 이미지로 저장', onclick: () => snapshot(v) }));
   return el('div', { className: 'card' }, el('div', { className: 'meta', textContent: info }), row);
+}
+
+// 지금 보이는 장면을 PNG로 저장. 페이지 안에서 못 꺼내는 영상은 탭 화면을 찍어 영상 부분만 잘라낸다.
+async function snapshot(v) {
+  const res = await chrome.tabs.sendMessage(tab.id, { type: 'snapshot', id: v.id, title: tab.title }, { frameId: v.frameId })
+    .catch(e => ({ ok: false, error: e.message }));
+  if (res?.ok) return say(`장면을 저장했습니다. (${res.width}×${res.height})`);
+  if (!res?.fallback) return say(`장면 캡처 실패: ${res?.error || ''}`);
+  const shot = await chrome.runtime.sendMessage({ type: 'shot-tab', tabId: tab.id, windowId: tab.windowId, vw: res.vw,
+    rect: res.top ? res.rect : null, title: tab.title, pageUrl: tab.url, suffix: res.suffix });
+  say(shot?.ok ? (res.top ? '장면을 저장했습니다. (화면에 보이는 크기)' : '장면을 저장했습니다. (탭 화면 전체)') : `장면 캡처 실패: ${shot?.error || ''}`);
 }
 
 function fileCard(f) {
@@ -76,14 +87,14 @@ async function download(url, type = '') {
   try { fromUrl = new URL(url).pathname.match(/\.(mp4|webm|mov)$/i)?.[1].toLowerCase() || ''; } catch {}
   const fromType = { 'video/webm': 'webm', 'video/quicktime': 'mov', 'video/mp4': 'mp4' }[type.split(';')[0]] || '';
   const ext = fromUrl || fromType || 'mp4';
-  const res = await chrome.runtime.sendMessage({ type: 'download', url, filename: `${safeName(tab.title)}.${ext}` });
+  const res = await chrome.runtime.sendMessage({ type: 'download', url, title: tab.title, pageUrl: tab.url, ext });
   say(res?.ok ? '다운로드를 시작했습니다.' : `다운로드 실패: ${res?.error || ''} → "탭 녹화"를 이용해 보세요.`);
 }
 
 async function startTabRec() {
   try {
     const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id });
-    const res = await chrome.runtime.sendMessage({ type: 'tabrec-start', tabId: tab.id, streamId, filename: safeName(tab.title) });
+    const res = await chrome.runtime.sendMessage({ type: 'tabrec-start', tabId: tab.id, streamId, title: tab.title, pageUrl: tab.url });
     say(res?.ok ? '' : res?.error);
   } catch (e) {
     say(`탭 녹화를 시작하지 못했습니다: ${e.message}`);
@@ -147,8 +158,25 @@ async function render() {
     : [el('p', { className: 'empty', textContent: '감지된 원본 파일이 없습니다.' })]));
 }
 
+// ── 저장 설정 (폴더·파일 이름 규칙) ──
+async function initNaming() {
+  const naming = await getNaming();
+  const folder = $('#nm-folder'), pattern = $('#nm-pattern');
+  folder.value = naming.folder; pattern.value = naming.pattern;
+  const update = async save => {
+    const n = { folder: safeFolder(folder.value), pattern: pattern.value };
+    if (save) { await chrome.storage.local.set({ naming: n }); folder.value = n.folder; }
+    $('#nm-preview').textContent = `예) 다운로드/${formatName(n, tab?.title || '영상 제목', tab?.url || 'https://www.youtube.com/', 'mp4')}`;
+  };
+  folder.oninput = () => update(false);
+  folder.onchange = () => update(true);
+  pattern.onchange = () => update(true);
+  update(false);
+}
+
 (async () => {
   [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  initNaming();
   if (!tab?.id || !/^https?:|^file:/.test(tab.url || '')) {
     // 새 탭·설정 화면 등에서는 화면 녹화만 쓸 수 있다
     await renderScreenRec();

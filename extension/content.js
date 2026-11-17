@@ -161,10 +161,10 @@ if (!window.__tonicstream) {
       const type = recorder.mimeType || mimeType || 'video/webm';
       const ext = type.includes('mp4') ? 'mp4' : 'webm';
       const url = URL.createObjectURL(new Blob(chunks, { type }));
-      const filename = `${safeName(title || document.title)}.${ext}`;
+      const filename = `${safeName(title || document.title)}.${ext}`; // 예비 저장용 이름
       // 자동 종료(영상 끝·한 바퀴 재생)는 클릭 없이 저장되므로, 다른 도메인·샌드박스 프레임에서도
       // 막히지 않는 브라우저 다운로드 기능으로 저장한다. 실패하면 링크 클릭으로 한 번 더 시도.
-      const res = await chrome.runtime.sendMessage({ type: 'save-blob', url, filename }).catch(() => null);
+      const res = await chrome.runtime.sendMessage({ type: 'save-blob', url, title: title || document.title, ext }).catch(() => null);
       if (!res?.ok) {
         const a = Object.assign(document.createElement('a'), { href: url, download: filename });
         document.documentElement.appendChild(a);
@@ -179,6 +179,30 @@ if (!window.__tonicstream) {
     syncState();
   }
 
+  // 지금 보이는 장면을 원본 해상도 PNG로 저장한다.
+  // 다른 도메인 영상은 브라우저가 막으므로, 위치 정보를 돌려줘 탭 화면 캡처로 대신하게 한다.
+  async function snapshot(id, title) {
+    const v = findVideo(id);
+    if (!v || !v.videoWidth) throw new Error('영상을 찾을 수 없습니다. 창을 새로고침(↻) 해주세요.');
+    const t = Math.floor(v.currentTime || 0);
+    const suffix = `${Math.floor(t / 60)}m${String(t % 60).padStart(2, '0')}s`;
+    try {
+      const c = document.createElement('canvas');
+      c.width = v.videoWidth; c.height = v.videoHeight;
+      c.getContext('2d').drawImage(v, 0, 0);
+      const blob = await new Promise((res, rej) => c.toBlob(b => b ? res(b) : rej(new Error('empty')), 'image/png'));
+      const url = URL.createObjectURL(blob);
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      const res = await chrome.runtime.sendMessage({ type: 'save-blob', url, title: title || document.title, ext: 'png', suffix });
+      if (!res?.ok) throw new Error(res?.error || '저장 실패');
+      return { ok: true, width: c.width, height: c.height };
+    } catch (e) {
+      const r = v.getBoundingClientRect();
+      return { ok: false, fallback: true, suffix, vw: innerWidth, top: window === top,
+        rect: { x: r.x, y: r.y, w: r.width, h: r.height } };
+    }
+  }
+
   function stopRecording(id) {
     const rec = recs.get(id);
     if (rec && rec.recorder.state !== 'inactive') rec.recorder.stop();
@@ -190,6 +214,10 @@ if (!window.__tonicstream) {
       startRecording(msg.id, msg.fromStart, msg.title)
         .then(() => sendResponse({ ok: true }))
         .catch(e => sendResponse({ ok: false, error: e.message }));
+      return true;
+    }
+    if (msg.type === 'snapshot') {
+      snapshot(msg.id, msg.title).then(sendResponse, e => sendResponse({ ok: false, error: e.message }));
       return true;
     }
     if (msg.type === 'stop') { stopRecording(msg.id); sendResponse({ ok: true }); }

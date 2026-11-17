@@ -118,7 +118,8 @@ async function finish(chunks, type, name) {
   const url = URL.createObjectURL(new Blob(chunks, { type }));
   try {
     // 저장이 끝날 때까지 이 창이 열려 있어야 임시 주소(blob)가 유지된다
-    await chrome.downloads.download({ url, filename: `${name}.${ext}`, saveAs: false });
+    // 이름에 이미 날짜가 있으므로 저장 폴더 설정만 적용
+    await chrome.downloads.download({ url, filename: await buildName(name, '', ext, { plain: true }), saveAs: false });
     $('#saved').textContent = `저장했습니다: ${name}.${ext}`;
   } catch (e) {
     $('#saved').textContent = `저장하지 못했습니다: ${e.message}`;
