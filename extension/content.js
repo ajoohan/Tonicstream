@@ -2,8 +2,12 @@
 // 요청 시 재생 화면을 그대로 녹화해 MP4로 저장한다.
 // DRM(넷플릭스 등 유료 OTT)으로 보호된 영상은 브라우저가 녹화를 막아 검은 화면만 저장된다.
 
-if (!window.__tonicstream) {
-  window.__tonicstream = true;
+// 이미 들어가 있고 살아 있으면 다시 넣지 않는다. 확장이 업데이트·새로 고침되면 이전 것은 죽은 상태가 되므로
+// (메시지를 못 받음) 그때는 새로 넣는다.
+// (이 파일은 같은 페이지에 여러 번 주입될 수 있어서 맨 바깥에는 const/let 선언을 두지 않는다)
+if (!(() => { try { return typeof window.__tonicstream === 'function' && window.__tonicstream(); } catch { return false; } })()) {
+  const __rt = chrome.runtime;
+  window.__tonicstream = () => { try { return !!__rt.id && !!__rt.getURL(''); } catch { return false; } };
 
   // 피드형 사이트(쇼츠/릴스/틱톡)는 영상 요소가 계속 생기고 사라지므로
   // 요소를 강하게 붙잡지 않도록 WeakMap만 쓰고, 찾을 때는 DOM에서 다시 찾는다.

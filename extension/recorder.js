@@ -138,21 +138,40 @@ async function finish(chunks, type, name, thumbP) {
     // 이름에 이미 날짜가 있으므로 저장 폴더 설정만 적용
     const filename = await buildName(name, '', ext, { plain: true });
     const downloadId = await chrome.downloads.download({ url, filename, saveAs: false });
-    chrome.runtime.sendMessage({ type: 'log-save', entry: { kind: '화면 녹화', title: name, pageUrl: '', filename, downloadId, thumb: await thumbP } }).catch(() => {});
-    $('#saved').textContent = `저장했습니다: ${name}.${ext}`;
+    const { screenRecIncognito } = await chrome.storage.session.get('screenRecIncognito');
+    chrome.runtime.sendMessage({ type: 'log-save', entry: { kind: '화면 녹화', title: name, pageUrl: '', filename, downloadId, thumb: await thumbP, incognito: !!screenRecIncognito } }).catch(() => {});
+    // 긴 녹화는 파일을 쓰는 데 시간이 걸린다. 다 쓸 때까지 창을 닫지 못하게 한다 (닫으면 임시 파일이 사라져 저장이 끊긴다)
+    saving = true;
+    $('#saved').textContent = '저장 중입니다… 창을 닫지 마세요.';
+    $('#again').disabled = $('#close').disabled = true;
+    show('done');
+    const state = await waitDownload(downloadId);
+    $('#saved').textContent = state === 'complete' ? `저장했습니다: ${name}.${ext}` : '저장하지 못했습니다. 다시 녹화해 주세요.';
   } catch (e) {
     $('#saved').textContent = `저장하지 못했습니다: ${e.message}`;
   }
+  saving = false;
+  $('#again').disabled = $('#close').disabled = false;
   show('done');
 }
 
+let saving = false;
+async function waitDownload(id) {
+  for (;;) {
+    const [d] = await chrome.downloads.search({ id });
+    if (!d || d.state !== 'in_progress') return d?.state || 'interrupted';
+    await new Promise(r => setTimeout(r, 300));
+  }
+}
+
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (_sender.tab) return; // 팝업·배경이 보낸 것만 (웹페이지 속 스크립트는 거절)
   if (msg.type === 'screenrec-stop') { const was = !!rec; stop(); sendResponse({ ok: true, recording: was }); }
 });
 
 // 녹화 도중 창을 닫으면 상태 표시만 정리 (녹화 내용은 저장되지 않음)
 addEventListener('pagehide', () => { if (rec) cleanup(); });
-addEventListener('beforeunload', e => { if (rec) e.preventDefault(); });
+addEventListener('beforeunload', e => { if (rec || saving) e.preventDefault(); });
 
 $('#start').onclick = start;
 $('#stop').onclick = stop;

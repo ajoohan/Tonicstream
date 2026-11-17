@@ -23,7 +23,9 @@ const edit = (id, change) => { quietUntil = Date.now() + 1500; return update(id,
 
 async function showFile(it) {
   const [d] = it.downloadId != null ? await chrome.downloads.search({ id: it.downloadId }) : [];
-  if (d?.exists) { say(''); return chrome.downloads.show(d.id); }
+  // 다운로드 기록을 지운 뒤에는 같은 번호가 다른 파일에 쓰일 수 있으므로, 시작 시각이 이 기록과 맞는지도 본다
+  const same = d && d.byExtensionId === chrome.runtime.id && Math.abs(Date.parse(d.startTime) - it.ts) < 10 * 60_000;
+  if (same && d.exists) { say(''); return chrome.downloads.show(d.id); }
   say(`파일을 찾지 못했습니다. 옮기거나 지웠을 수 있습니다: ${it.filename}`);
 }
 

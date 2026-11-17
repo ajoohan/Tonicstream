@@ -92,9 +92,17 @@ async function clearTab(tabId) {
 chrome.tabs.onRemoved.addListener(tabId => { clearTab(tabId); setVideoRec(tabId, null, false); });
 // 영상 녹화 상태는 여기서 지우지 않는다: 파일 다운로드 링크처럼 페이지가 바뀌지 않는 이동 요청도 있기 때문.
 // 실제로 페이지를 떠날 때는 content.js가 알려준다(pagehide).
-chrome.webRequest.onBeforeRequest.addListener(
-  d => { if (d.tabId >= 0) clearTab(d.tabId); },
-  { urls: ['<all_urls>'], types: ['main_frame'] }
+// 감지된 파일 목록은 새 페이지가 실제로 열릴 때만 비운다. 파일 다운로드 링크(첨부), 내용 없는 응답(204),
+// 미리 불러오기(prerender)는 지금 페이지를 바꾸지 않으므로 건드리지 않는다.
+chrome.webRequest.onHeadersReceived.addListener(
+  d => {
+    if (d.tabId < 0 || d.frameId !== 0 || (d.documentLifecycle && d.documentLifecycle !== 'active')) return;
+    if (d.statusCode < 200 || d.statusCode >= 300 || d.statusCode === 204 || d.statusCode === 205) return;
+    if (/attachment/i.test(header(d.responseHeaders, 'content-disposition'))) return;
+    clearTab(d.tabId);
+  },
+  { urls: ['<all_urls>'], types: ['main_frame'] },
+  ['responseHeaders']
 );
 
 // 확장 자체 화면(팝업·보관함·녹화 창·숨겨진 페이지)에서만 받는 요청. 웹페이지에 들어간 content.js가 보낸 것은 거절한다.
@@ -356,7 +364,21 @@ chrome.storage.onChanged.addListener(async (changes, area) => {
   if (area !== 'session' || !(changes.tabRec || changes.screenRec || changes.videoRecs)) return;
   refreshAction();
   // 화면 녹화가 시작·종료되면 원본 파일 개수를 보여주던 탭들의 배지도 REC로 맞춘다
-  if (changes.screenRec) for (const tabId of Object.keys(await load())) updateBadge(Number(tabId));
+  if (changes.screenRec) {
+    const { tabRec, videoRecs = {}, stopTabs = [] } = await chrome.storage.session.get(['tabRec', 'videoRecs', 'stopTabs']);
+    const tabs = new Set([...Object.keys(await load()), ...Object.keys(videoRecs), ...stopTabs].map(Number));
+    if (tabRec) tabs.add(tabRec.tabId);
+    for (const tabId of tabs) updateBadge(tabId);
+  }
+});
+
+// 화면 녹화 창이 정리 없이 사라져도(강제 종료 등) 녹화 중 표시가 남지 않게 한다
+chrome.windows.onRemoved.addListener(async windowId => {
+  const { screenRec } = await chrome.storage.session.get('screenRec');
+  if (screenRec?.windowId !== windowId) return;
+  await chrome.storage.session.remove('screenRec');
+  chrome.action.setBadgeText({ text: '' });
+  chrome.action.setBadgeBackgroundColor({ color: '#5f6368' });
 });
 chrome.runtime.onStartup.addListener(refreshAction);
 chrome.runtime.onInstalled.addListener(refreshAction);
@@ -459,6 +481,11 @@ async function saveLibrary(library) {
   }
 }
 
+// 보관함 기록과 브라우저의 다운로드 항목이 같은 저장인지: 이 확장이 시작했고, 시작 시각이 기록 시각과 가깝다
+function sameDownload(entry, item) {
+  return !!item && item.byExtensionId === chrome.runtime.id && Math.abs(Date.parse(item.startTime) - entry.ts) < 10 * 60_000;
+}
+
 // 같은 이름이 있으면 브라우저가 "제목 (1).mp4"처럼 바꾸므로, 실제 저장된 이름으로 맞춘다 (설정한 하위 폴더는 유지)
 function finalName(requested, actualPath) {
   if (!actualPath) return requested;
@@ -473,8 +500,12 @@ chrome.downloads.onChanged.addListener(d => {
   libraryQueue = libraryQueue.then(async () => {
     const { library = [] } = await chrome.storage.local.get('library');
     if (!library.some(x => x.downloadId === d.id)) return;
-    const next = failed ? library.filter(x => x.downloadId !== d.id)
-      : library.map(x => x.downloadId === d.id ? { ...x, filename: finalName(x.filename, d.filename.current) } : x);
+    // 다운로드 기록을 지우면 브라우저가 번호를 다시 쓰므로, 이 확장이 방금 시작한 저장이 맞는지 확인한다
+    const [item] = await chrome.downloads.search({ id: d.id });
+    const mine = x => x.downloadId === d.id && sameDownload(x, item);
+    if (!library.some(mine)) return;
+    const next = failed ? library.filter(x => !mine(x))
+      : library.map(x => mine(x) ? { ...x, filename: finalName(x.filename, d.filename.current) } : x);
     await chrome.storage.local.set({ library: next });
   }).catch(e => console.warn('보관함 수정 실패', e));
 });
