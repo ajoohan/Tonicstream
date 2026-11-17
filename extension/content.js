@@ -59,6 +59,42 @@ if (!window.__tonicstream) {
     el.addEventListener(ev, () => { clearTimeout(t); res(); }, { once: true });
   });
 
+  // ── 녹화 중 페이지에 띄우는 정지 바 ──
+  // 영상 요소만 녹화하므로 이 바는 결과 파일에 찍히지 않는다.
+  let bar = null, barTimer = null;
+  function showBar() {
+    if (bar) return;
+    const host = document.createElement('div');
+    host.style.cssText = 'all:initial;position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:2147483647';
+    const root = host.attachShadow({ mode: 'closed' });
+    root.innerHTML = `<style>
+      .b{display:flex;align-items:center;gap:10px;padding:7px 8px 7px 14px;border-radius:999px;background:rgba(24,24,28,.92);
+        color:#f0f0f4;font:600 14px/1.2 "Pretendard Variable",Pretendard,system-ui,"Segoe UI","Malgun Gothic",sans-serif;
+        box-shadow:0 8px 24px rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.12);backdrop-filter:blur(8px);cursor:default;user-select:none}
+      .t{color:#ff6b70;font-variant-numeric:tabular-nums;min-width:92px}
+      button{all:unset;cursor:pointer;background:#e5484d;color:#fff;font-weight:700;padding:7px 14px;border-radius:999px}
+      button:hover{filter:brightness(1.1)}
+      .x{background:transparent;color:#a8a8b4;padding:7px 8px;font-weight:600}
+    </style><div class="b"><span class="t"></span><button class="s">정지 후 저장</button><button class="x" title="숨기기">✕</button></div>`;
+    const t = root.querySelector('.t');
+    const tick = () => {
+      const r = [...recs.values()][0];
+      if (r) t.textContent = `● 녹화 중 ${Math.floor((Date.now() - r.startedAt) / 60000)}:${String(Math.floor((Date.now() - r.startedAt) / 1000) % 60).padStart(2, '0')}`;
+    };
+    root.querySelector('.s').onclick = () => { for (const id of [...recs.keys()]) stopRecording(id); };
+    root.querySelector('.x').onclick = () => { host.style.display = 'none'; };
+    (document.body || document.documentElement).appendChild(host);
+    bar = host; tick(); barTimer = setInterval(tick, 500);
+  }
+  function hideBar() {
+    clearInterval(barTimer); bar?.remove(); bar = null;
+  }
+  // 배경에 녹화 상태를 알려 툴바 아이콘(REC 배지, 한 번 클릭 정지)을 맞춘다
+  function syncState() {
+    if (recs.size) showBar(); else hideBar();
+    chrome.runtime.sendMessage({ type: 'videorec-state', recording: recs.size > 0 }).catch(() => {});
+  }
+
   async function startRecording(id, fromStart, title) {
     const v = findVideo(id);
     if (!v) throw new Error('영상을 찾을 수 없습니다. 창을 새로고침(↻) 해주세요.');
@@ -108,6 +144,7 @@ if (!window.__tonicstream) {
     const cleanup = () => {
       for (const [ev, fn] of Object.entries(handlers)) v.removeEventListener(ev, fn);
       recs.delete(id);
+      syncState();
     };
 
     recorder.onstop = () => {
@@ -128,6 +165,7 @@ if (!window.__tonicstream) {
     recorder.start(1000);
     sync(); // 자동재생이 막혀 멈춰 있으면 재생될 때까지 대기
     recs.set(id, { recorder, startedAt: Date.now() });
+    syncState();
   }
 
   function stopRecording(id) {
@@ -144,5 +182,6 @@ if (!window.__tonicstream) {
       return true;
     }
     if (msg.type === 'stop') { stopRecording(msg.id); sendResponse({ ok: true }); }
+    if (msg.type === 'stop-all') { const n = recs.size; for (const id of [...recs.keys()]) stopRecording(id); sendResponse({ ok: true, stopped: n }); }
   });
 }

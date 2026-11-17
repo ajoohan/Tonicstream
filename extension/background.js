@@ -64,10 +64,10 @@ chrome.webRequest.onHeadersReceived.addListener(
   ['responseHeaders']
 );
 
-// 배지: 탭 녹화 중이면 REC, 아니면 감지된 원본 파일 개수
+// 배지: 탭/영상 녹화 중이면 REC, 아니면 감지된 원본 파일 개수
 async function updateBadge(tabId) {
-  const [media, { tabRec }] = await Promise.all([load(), chrome.storage.session.get('tabRec')]);
-  const rec = tabRec?.tabId === tabId;
+  const [media, { tabRec, videoRecs }] = await Promise.all([load(), chrome.storage.session.get(['tabRec', 'videoRecs'])]);
+  const rec = tabRec?.tabId === tabId || !!videoRecs?.[tabId]?.length;
   const n = media[tabId]?.length || 0;
   if (rec) chrome.action.setBadgeBackgroundColor({ tabId, color: '#e5484d' }).catch(() => {});
   chrome.action.setBadgeText({ tabId, text: rec ? 'REC' : n ? String(n) : '' }).catch(() => {});
@@ -81,9 +81,9 @@ async function clearTab(tabId) {
   updateBadge(tabId);
 }
 
-chrome.tabs.onRemoved.addListener(clearTab);
+chrome.tabs.onRemoved.addListener(tabId => { clearTab(tabId); setVideoRec(tabId, null, false); });
 chrome.webRequest.onBeforeRequest.addListener(
-  d => { if (d.tabId >= 0) clearTab(d.tabId); },
+  d => { if (d.tabId >= 0) { clearTab(d.tabId); setVideoRec(d.tabId, null, false); } },
   { urls: ['<all_urls>'], types: ['main_frame'] }
 );
 
@@ -99,6 +99,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === 'tabrec-ended') {
     // 숨겨진 페이지에서 녹화가 끝남 (정지 버튼, 탭 닫힘, 공유 중단 모두 여기로 옴)
     onTabRecEnded(msg);
+    return;
+  }
+  if (msg.type === 'videorec-state') {
+    if (_sender.tab?.id >= 0) setVideoRec(_sender.tab.id, _sender.frameId, msg.recording);
     return;
   }
   if (msg.type === 'getMedia') {
@@ -184,3 +188,57 @@ chrome.tabs.onRemoved.addListener(async tabId => {
   const { tabRec } = await chrome.storage.session.get('tabRec');
   if (tabRec?.tabId === tabId) stopTabRecording();
 });
+
+// ── 녹화 중 툴바 아이콘 = 정지 버튼 ─────────────────────
+// 팝업은 페이지를 클릭하면 닫히므로, 녹화 중에는 아이콘(또는 Alt+Shift+V)을 한 번 누르면
+// 팝업을 열지 않고 바로 정지·저장한다.
+
+// 영상 요소 녹화 상태: { [tabId]: [frameId, ...] }  (frameId null = 탭 전체 정리)
+async function setVideoRec(tabId, frameId, recording) {
+  const { videoRecs = {} } = await chrome.storage.session.get('videoRecs');
+  const frames = new Set(frameId == null ? [] : videoRecs[tabId] || []);
+  if (recording) frames.add(frameId); else if (frameId != null) frames.delete(frameId);
+  if (!frames.size && !videoRecs[tabId]) return;
+  if (frames.size) videoRecs[tabId] = [...frames]; else delete videoRecs[tabId];
+  await chrome.storage.session.set({ videoRecs });
+  updateBadge(tabId);
+}
+
+async function refreshAction() {
+  const { tabRec, screenRec, videoRecs = {} } = await chrome.storage.session.get(['tabRec', 'screenRec', 'videoRecs']);
+  const any = !!tabRec || !!screenRec || Object.keys(videoRecs).length > 0;
+  await chrome.action.setPopup({ popup: any ? '' : 'popup.html' });
+  await chrome.action.setTitle({ title: any ? '녹화 중 · 클릭하면 정지 후 저장' : '영상 저장' });
+}
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'session' && (changes.tabRec || changes.screenRec || changes.videoRecs)) refreshAction();
+});
+chrome.runtime.onStartup.addListener(refreshAction);
+chrome.runtime.onInstalled.addListener(refreshAction);
+
+// 녹화 중일 때만 호출됨 (평소엔 팝업이 열림)
+async function stopFromAction(tab) {
+  const { tabRec, screenRec, videoRecs = {} } = await chrome.storage.session.get(['tabRec', 'screenRec', 'videoRecs']);
+  if (videoRecs[tab.id]?.length) {
+    await chrome.tabs.sendMessage(tab.id, { type: 'stop-all' }).catch(() => {});
+    // 응답이 없는 프레임(이미 사라진 페이지 등)은 상태만 정리
+    setTimeout(async () => {
+      const { videoRecs: v = {} } = await chrome.storage.session.get('videoRecs');
+      if (v[tab.id]?.length) setVideoRec(tab.id, null, false);
+    }, 3000);
+    return;
+  }
+  if (tabRec?.tabId === tab.id) return stopTabRecording();
+  if (screenRec) {
+    const res = await chrome.runtime.sendMessage({ type: 'screenrec-stop' }).catch(() => null);
+    if (!res?.recording) chrome.storage.session.remove('screenRec');
+    return;
+  }
+  if (tabRec) return stopTabRecording();
+  // 다른 탭의 영상 녹화만 진행 중이면 평소처럼 팝업을 연다
+  await chrome.action.setPopup({ popup: 'popup.html' });
+  await chrome.action.openPopup().catch(() => {});
+  refreshAction();
+}
+chrome.action.onClicked.addListener(stopFromAction);
