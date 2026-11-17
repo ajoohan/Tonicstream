@@ -1,0 +1,74 @@
+<template>
+  <style>
+@font-face { font-family: "Pretendard Variable"; font-weight: 45 920; font-display: block; src: url('assets/fonts/PretendardVariable.woff2') format('woff2-variations'); }
+#root { position: absolute; inset: 0; color: #ededf1; font-family: "Pretendard Variable", sans-serif; word-break: keep-all; }
+.layer { position: absolute; inset: 0; }
+.copy { position: absolute; left: 130px; top: 0; width: 800px; height: 1080px; display: flex; flex-direction: column; justify-content: center; }
+.chip { align-self: flex-start; font-size: 30px; font-weight: 700; color: #ff5a5f; background: rgba(255,90,95,.12); border: 2px solid rgba(255,90,95,.35); padding: 10px 24px; border-radius: 999px; margin-bottom: 34px; letter-spacing: -.01em; }
+h1 { margin: 0; font-size: 98px; line-height: 1.14; font-weight: 800; letter-spacing: -.045em; }
+h1 em { font-style: normal; color: #ff5a5f; }
+h1 .w { display: inline-block; }
+.sub { margin-top: 34px; font-size: 40px; font-weight: 500; color: #a1a1ac; letter-spacing: -.02em; }
+.stage { position: absolute; left: 960px; top: 0; width: 960px; height: 1080px; }
+.phone { position: absolute; width: 450px; height: 800px; border-radius: 40px; overflow: hidden; border: 2px solid #2c2c34; box-shadow: 0 40px 100px rgba(0,0,0,.6); background: #111; }
+.phone .img { position: absolute; inset: 0; background: url('assets/short.jpg') center/cover; }
+.pill { position: absolute; background: #e5484d; color: #fff; font-weight: 700; font-size: 29px; padding: 8px 18px; border-radius: 999px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+#range-stage-in { top: 110px; }
+#range-strip { position: absolute; left: 20px; top: 200px; width: 868px; height: 230px; border-radius: 18px; overflow: hidden; display: flex; gap: 4px; background: #0d0d10; border: 2px solid #2c2c34; }
+.tile { flex: 1; background: url('assets/short.jpg'); background-size: 260%; }
+.dim { position: absolute; top: 200px; height: 234px; background: rgba(13,13,16,.78); }
+#range-dimL { left: 20px; width: 248px; transform-origin: left center; }
+#range-dimR { left: 640px; width: 250px; transform-origin: right center; }
+.handle { position: absolute; top: 176px; width: 10px; height: 282px; border-radius: 6px; background: #ff5a5f; box-shadow: 0 0 24px rgba(255,90,95,.6); }
+.tag { position: absolute; top: 112px; font-size: 30px; font-weight: 700; color: #fff; background: #ff5a5f; padding: 5px 14px; border-radius: 10px; font-variant-numeric: tabular-nums; }
+#range-bar { position: absolute; left: 268px; top: 452px; width: 372px; height: 8px; border-radius: 4px; background: #ff5a5f; transform-origin: left center; }
+#range-card { position: absolute; left: 20px; top: 520px; width: 520px; border-radius: 20px; overflow: hidden; border: 2px solid #2c2c34; box-shadow: 0 30px 80px rgba(0,0,0,.6); }
+#range-card img { display: block; width: 100%; }
+#range-file { position: absolute; left: 560px; top: 640px; width: 350px; background: #1c1c21; border: 2px solid #2e2e36; border-radius: 20px; padding: 22px 26px; font-size: 28px; font-weight: 700; box-shadow: 0 24px 60px rgba(0,0,0,.6); }
+#range-file small { display: block; font-size: 28px; font-weight: 500; color: #9a9aa6; margin-top: 6px; }
+#range-file b { color: #46c37b; margin-right: 8px; }
+
+  </style>
+  <div id="root" data-composition-id="range" data-width="1920" data-height="1080">
+
+    <div id="range-copy" class="clip layer" data-start="0" data-duration="3.6" data-track-index="1">
+      <div class="copy" id="range-copy-in">
+        <div class="chip">구간 녹화</div>
+        <h1 id="range-h">필요한 부분만<br><em>골라서</em> 저장.</h1>
+        <div class="sub">시작·끝 시간만 정하면 끝</div>
+      </div>
+    </div>
+    <div id="range-stage" class="clip layer" data-start="0" data-duration="3.6" data-track-index="2">
+      <div class="stage" id="range-stage-in">
+        <div id="range-strip"><div class="tile" style="background-position:20% 10%"></div><div class="tile" style="background-position:45% 25%"></div><div class="tile" style="background-position:50% 40%"></div><div class="tile" style="background-position:55% 30%"></div><div class="tile" style="background-position:60% 55%"></div><div class="tile" style="background-position:40% 70%"></div><div class="tile" style="background-position:50% 85%"></div></div>
+        <div class="dim" id="range-dimL"></div><div class="dim" id="range-dimR"></div>
+        <div id="range-bar"></div>
+        <div class="handle" id="range-hL" style="left:263px"></div><div class="handle" id="range-hR" style="left:635px"></div>
+        <div class="tag" id="range-tL" style="left:226px">0:10</div><div class="tag" id="range-tR" style="left:598px">0:25</div>
+        <div id="range-card"><img src="assets/card-range.png" alt=""></div>
+        <div id="range-file"><b>✓</b>트렌치 첫 공개.mp4<small>0:10~0:25 · 15초</small></div>
+      </div>
+    </div>
+
+  </div>
+  <script>
+    (() => {
+      const tl = gsap.timeline({ paused: true });
+      const mmss = s => Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0');
+
+      tl.fromTo('#range-copy-in', { opacity: 0, filter: 'blur(10px)' }, { opacity: 1, filter: 'blur(0px)', duration: 0.2, ease: 'power4.out' }, 0.05);
+      tl.fromTo('#range-strip', { opacity: 0, x: 140 }, { opacity: 1, x: 0, duration: 0.6, ease: 'expo.out' }, 0.1);
+      tl.fromTo('#range-dimL', { scaleX: 0 }, { scaleX: 1, duration: 0.55, ease: 'power3.out' }, 0.7);
+      tl.fromTo(['#range-hL', '#range-tL'], { x: -248, opacity: 0 }, { x: 0, opacity: 1, duration: 0.55, ease: 'power3.out' }, 0.7);
+      tl.fromTo('#range-dimR', { scaleX: 0 }, { scaleX: 1, duration: 0.55, ease: 'power3.out' }, 0.95);
+      tl.fromTo(['#range-hR', '#range-tR'], { x: 250, opacity: 0 }, { x: 0, opacity: 1, duration: 0.55, ease: 'power3.out' }, 0.95);
+      tl.fromTo('#range-bar', { scaleX: 0 }, { scaleX: 1, duration: 0.9, ease: 'none' }, 1.4);
+      tl.fromTo('#range-card', { opacity: 0, y: 70 }, { opacity: 1, y: 0, duration: 0.55, ease: 'expo.out' }, 0.5);
+      tl.fromTo('#range-file', { opacity: 0, scale: 0.85, y: 30 }, { opacity: 1, scale: 1, y: 0, duration: 0.4, ease: 'back.out(1.5)' }, 1.9);
+      tl.to(['#range-copy-in', '#range-stage-in'], { opacity: 0, filter: 'blur(10px)', duration: 0.2, ease: 'power3.in' }, 3.38);
+
+      window.__timelines["range"] = tl;
+    })();
+  </script>
+</template>

@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <script src="assets/gsap.min.js"></script>
+    <style>
+      @font-face { font-family: "Pretendard Variable"; font-weight: 45 920; font-display: block; src: url('assets/fonts/PretendardVariable.woff2') format('woff2-variations'); }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; width: 1920px; height: 1080px; overflow: hidden; background: #0d0d10; }
+      #root { width: 100%; height: 100%; position: relative; font-family: "Pretendard Variable", sans-serif; }
+      #bg { position: absolute; inset: 0; background: #0d0d10; overflow: hidden; }
+      #glow { position: absolute; left: -500px; top: -700px; width: 1900px; height: 1500px; border-radius: 50%; background: radial-gradient(closest-side, rgba(255,90,95,.30), rgba(255,90,95,0)); }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="main" data-start="0" data-duration="18.0" data-width="1920" data-height="1080">
+      <div id="bg" data-layout-ignore><div id="glow"></div></div>
+      <div id="intro" data-composition-id="intro" data-composition-src="compositions/intro.html" data-start="0" data-duration="3.2" data-track-index="1" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+      <div id="range" data-composition-id="range" data-composition-src="compositions/range.html" data-start="3.2" data-duration="3.6" data-track-index="1" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+      <div id="capture" data-composition-id="capture" data-composition-src="compositions/capture.html" data-start="6.8" data-duration="3.2" data-track-index="1" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+      <div id="screen" data-composition-id="screen" data-composition-src="compositions/screen.html" data-start="10.0" data-duration="2.8" data-track-index="1" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+      <div id="library" data-composition-id="library" data-composition-src="compositions/library.html" data-start="12.8" data-duration="5.2" data-track-index="1" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+    </div>
+    <script>
+      const tl = gsap.timeline({ paused: true });
+      // 배경 빛이 장면마다 천천히 자리를 옮긴다 (처음과 끝 위치가 같아 반복 재생이 이어진다)
+      tl.fromTo("#glow", { x: 0, y: 0 }, { x: 900, y: 250, duration: 9, ease: "sine.inOut" }, 0);
+      tl.to("#glow", { x: 0, y: 0, duration: 9, ease: "sine.inOut" }, 9);
+      window.__timelines["main"] = tl;
+    </script>
+  </body>
+</html>

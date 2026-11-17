@@ -1,0 +1,94 @@
+<template>
+  <style>
+@font-face { font-family: "Pretendard Variable"; font-weight: 45 920; font-display: block; src: url('assets/fonts/PretendardVariable.woff2') format('woff2-variations'); }
+#root { position: absolute; inset: 0; color: #ededf1; font-family: "Pretendard Variable", sans-serif; word-break: keep-all; }
+.layer { position: absolute; inset: 0; }
+.copy { position: absolute; left: 130px; top: 0; width: 800px; height: 1080px; display: flex; flex-direction: column; justify-content: center; }
+.chip { align-self: flex-start; font-size: 30px; font-weight: 700; color: #ff5a5f; background: rgba(255,90,95,.12); border: 2px solid rgba(255,90,95,.35); padding: 10px 24px; border-radius: 999px; margin-bottom: 34px; letter-spacing: -.01em; }
+h1 { margin: 0; font-size: 98px; line-height: 1.14; font-weight: 800; letter-spacing: -.045em; }
+h1 em { font-style: normal; color: #ff5a5f; }
+h1 .w { display: inline-block; }
+.sub { margin-top: 34px; font-size: 40px; font-weight: 500; color: #a1a1ac; letter-spacing: -.02em; }
+.stage { position: absolute; left: 960px; top: 0; width: 960px; height: 1080px; }
+.phone { position: absolute; width: 450px; height: 800px; border-radius: 40px; overflow: hidden; border: 2px solid #2c2c34; box-shadow: 0 40px 100px rgba(0,0,0,.6); background: #111; }
+.phone .img { position: absolute; inset: 0; background: url('assets/short.jpg') center/cover; }
+.pill { position: absolute; background: #e5484d; color: #fff; font-weight: 700; font-size: 29px; padding: 8px 18px; border-radius: 999px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+#scr-mon { position: absolute; left: 30px; top: 210px; width: 860px; height: 540px; border-radius: 28px; border: 3px solid #34343d; background: #121216; box-shadow: 0 40px 100px rgba(0,0,0,.6); overflow: hidden; }
+.win { position: absolute; border-radius: 16px; background: #1d1d23; border: 2px solid #2e2e36; overflow: hidden; }
+.win i { position: absolute; left: 18px; height: 14px; border-radius: 7px; background: #33333c; }
+.win .bar { position: absolute; left: 0; top: 0; right: 0; height: 40px; background: #26262d; }
+.win .bar::before { content: ""; position: absolute; left: 16px; top: 14px; width: 12px; height: 12px; border-radius: 50%; background: #ff5a5f; box-shadow: 20px 0 0 #55555f, 40px 0 0 #55555f; }
+#scr-w1 { left: 40px; top: 40px; width: 470px; height: 330px; }
+#scr-w1 .pic { position: absolute; left: 18px; top: 58px; width: 180px; height: 250px; border-radius: 10px; background: url('assets/short.jpg') center/cover; }
+#scr-w2 { left: 430px; top: 200px; width: 380px; height: 290px; }
+.rb { position: absolute; width: 50px; height: 50px; border: 6px solid #ff5a5f; }
+#scr-pill { left: 62px; top: 232px; }
+#scr-ctl { position: absolute; left: 400px; top: 790px; width: 490px; height: 96px; border-radius: 48px; background: rgba(28,28,33,.96); border: 2px solid #34343d; box-shadow: 0 24px 60px rgba(0,0,0,.6); display: flex; align-items: center; justify-content: space-between; padding: 0 14px 0 34px; }
+#scr-ctl .t { font-size: 34px; font-weight: 700; color: #ff6b70; font-variant-numeric: tabular-nums; }
+#scr-btn { font-size: 30px; font-weight: 700; color: #fff; background: #e5484d; padding: 16px 30px; border-radius: 40px; }
+#scr-mic { position: absolute; left: 30px; top: 800px; font-size: 28px; font-weight: 600; color: #a1a1ac; display: flex; align-items: center; gap: 14px; height: 76px; }
+#scr-mic .lv { display: flex; gap: 5px; align-items: center; height: 44px; }
+#scr-mic .lv b { width: 7px; height: 44px; border-radius: 4px; background: #46c37b; transform-origin: center; }
+#scr-cur { position: absolute; left: 0; top: 0; width: 0; height: 0; border-left: 26px solid #fff; border-bottom: 26px solid transparent; filter: drop-shadow(0 4px 6px rgba(0,0,0,.6)); }
+
+  </style>
+  <div id="root" data-composition-id="screen" data-width="1920" data-height="1080">
+
+    <div id="screen-copy" class="clip layer" data-start="0" data-duration="2.8" data-track-index="1">
+      <div class="copy" id="scr-copy-in">
+        <div class="chip">화면 녹화</div>
+        <h1><span class="w sw">모니터·창·탭</span><br><span class="w sw"><em>그대로</em></span> <span class="w sw">녹화.</span></h1>
+        <div class="sub">컴퓨터 소리 · 마이크 소리도 함께</div>
+      </div>
+    </div>
+    <div id="screen-stage" class="clip layer" data-start="0" data-duration="2.8" data-track-index="2">
+      <div class="stage" id="scr-stage-in">
+        <div id="scr-mon">
+          <div class="win" id="scr-w1"><div class="bar"></div><div class="pic"></div><i style="left:216px;top:66px;width:210px;height:20px"></i><i style="left:216px;top:104px;width:170px"></i><i style="left:216px;top:132px;width:200px"></i><i style="left:216px;top:160px;width:120px"></i><i style="left:216px;top:230px;width:150px;height:44px;border-radius:12px;background:#3a3a44"></i></div>
+          <div class="win" id="scr-w2"><div class="bar"></div><i style="top:62px;width:250px;height:20px"></i><i style="top:100px;width:330px"></i><i style="top:128px;width:300px"></i><i style="top:156px;width:320px"></i><i style="top:184px;width:210px"></i><i style="top:226px;width:130px;height:40px;border-radius:12px;background:#3a3a44"></i></div>
+        </div>
+        <div class="rb" id="scr-b1" style="left:8px;top:188px;border-right:0;border-bottom:0;border-radius:20px 0 0 0"></div>
+        <div class="rb" id="scr-b2" style="left:862px;top:188px;border-left:0;border-bottom:0;border-radius:0 20px 0 0"></div>
+        <div class="rb" id="scr-b3" style="left:8px;top:722px;border-right:0;border-top:0;border-radius:0 0 0 20px"></div>
+        <div class="rb" id="scr-b4" style="left:862px;top:722px;border-left:0;border-top:0;border-radius:0 0 20px 0"></div>
+        <div class="pill" id="scr-pill">● REC</div>
+        <div id="scr-mic">마이크<span class="lv"><b></b><b></b><b></b><b></b><b></b><b></b><b></b><b></b></span></div>
+        <div id="scr-ctl"><span class="t">● <span id="scr-time">0:00</span></span><span id="scr-btn">정지 후 저장</span></div>
+        <div id="scr-cur"></div>
+      </div>
+    </div>
+
+  </div>
+  <script>
+    (() => {
+      const tl = gsap.timeline({ paused: true });
+      const mmss = s => Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0');
+
+      tl.fromTo('.sw', { opacity: 0, filter: 'blur(6px)' }, { opacity: 1, filter: 'blur(0px)', duration: 0.14, stagger: 0.08, ease: 'power2.out' }, 0.08);
+      tl.fromTo(['#scr-copy-in .chip', '#scr-copy-in .sub'], { opacity: 0 }, { opacity: 1, duration: 0.25, ease: 'power2.out' }, 0.05);
+      tl.fromTo('#scr-mon', { opacity: 0, y: 70 }, { opacity: 1, y: 0, duration: 0.6, ease: 'expo.out' }, 0.05);
+      tl.fromTo('#scr-w2', { x: 60, y: 30 }, { x: -40, y: -50, duration: 1.3, ease: 'power2.inOut' }, 0.7);
+      tl.fromTo('.rb', { opacity: 0, scale: 1.7 }, { opacity: 1, scale: 1, duration: 0.3, ease: 'power4.out' }, 0.45);
+      tl.fromTo('#scr-pill', { opacity: 0, scale: 0.6 }, { opacity: 1, scale: 1, duration: 0.28, ease: 'back.out(1.6)' }, 0.55);
+      tl.fromTo(['#scr-ctl', '#scr-mic'], { opacity: 0, y: 40 }, { opacity: 1, y: 0, duration: 0.45, ease: 'expo.out' }, 0.5);
+      const c = { v: 0 };
+      tl.to(c, { v: 4, duration: 1.5, ease: 'none', onUpdate: () => { document.getElementById('scr-time').textContent = mmss(c.v); } }, 0.6);
+      // 마이크 레벨: 시간에 따라 정해진 값으로만 움직임
+      const lv = [[.3,.9,.5,1,.4,.8],[.6,.4,1,.5,.9,.3],[1,.6,.3,.8,.5,.9],[.5,1,.7,.4,1,.6],[.8,.3,.9,.6,.3,1],[.4,.7,.5,1,.7,.4],[.9,.5,.8,.3,.6,.8],[.3,.8,.4,.7,1,.5]];
+      document.querySelectorAll('#scr-mic .lv b').forEach((b, i) => {
+        tl.set(b, { scaleY: lv[i][0] }, 0);
+        lv[i].forEach((v, k) => tl.to(b, { scaleY: v, duration: 0.3, ease: 'sine.inOut' }, 0.6 + k * 0.3));
+      });
+      // 커서가 창을 옮기다가 정지 버튼으로
+      tl.fromTo('#scr-cur', { opacity: 0, x: 700, y: 440 }, { opacity: 1, x: 640, y: 420, duration: 0.3, ease: 'power2.out' }, 0.55);
+      tl.to('#scr-cur', { x: 540, y: 340, duration: 1.14, ease: 'power2.inOut' }, 0.86);
+      tl.to('#scr-cur', { x: 760, y: 840, duration: 0.4, ease: 'power3.inOut' }, 2.0);
+      tl.to('#scr-btn', { scale: 0.92, duration: 0.07, ease: 'power2.in' }, 2.4);
+      tl.to('#scr-btn', { scale: 1, backgroundColor: '#1f8f4e', duration: 0.14, ease: 'power2.out' }, 2.47);
+      tl.to(['#scr-copy-in', '#scr-stage-in'], { opacity: 0, filter: 'blur(10px)', duration: 0.2, ease: 'power3.in' }, 2.58);
+
+      window.__timelines["screen"] = tl;
+    })();
+  </script>
+</template>
