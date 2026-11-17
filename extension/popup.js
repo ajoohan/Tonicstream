@@ -22,12 +22,13 @@ async function frameVideos() {
       target: { tabId: tab.id, allFrames: true }, files: ['content.js'],
     }).catch(() => []);
     frameIds = injected.map(r => r.frameId);
+    // 주입이 막힌 경우에도 매니페스트로 이미 들어가 있는 맨 위 프레임에는 물어본다
+    if (!frameIds.length) frameIds = [0];
   }
+  const replies = await Promise.all(frameIds.map(frameId =>
+    chrome.tabs.sendMessage(tab.id, { type: 'list' }, { frameId }).then(res => ({ res, frameId }), () => null)));
   const out = [];
-  for (const frameId of frameIds) {
-    const res = await chrome.tabs.sendMessage(tab.id, { type: 'list' }, { frameId }).catch(() => null);
-    for (const v of res?.videos || []) out.push({ ...v, frameId });
-  }
+  for (const r of replies) for (const v of r?.res?.videos || []) out.push({ ...v, frameId: r.frameId });
   return out.sort((a, b) => b.recording - a.recording || b.active - a.active || b.area - a.area);
 }
 
@@ -70,9 +71,11 @@ function fileCard(f) {
 }
 
 async function download(url, type = '') {
-  let ext = 'mp4';
-  try { ext = (type.split('/')[1] || new URL(url).pathname.split('.').pop() || '').toLowerCase(); } catch {}
-  ext = { quicktime: 'mov', webm: 'webm', mov: 'mov' }[ext] || 'mp4';
+  // 주소의 확장자를 먼저 보고, 없으면 파일 형식(video/webm 등)으로 정한다
+  let fromUrl = '';
+  try { fromUrl = new URL(url).pathname.match(/\.(mp4|webm|mov)$/i)?.[1].toLowerCase() || ''; } catch {}
+  const fromType = { 'video/webm': 'webm', 'video/quicktime': 'mov', 'video/mp4': 'mp4' }[type.split(';')[0]] || '';
+  const ext = fromUrl || fromType || 'mp4';
   const res = await chrome.runtime.sendMessage({ type: 'download', url, filename: `${safeName(tab.title)}.${ext}` });
   say(res?.ok ? '다운로드를 시작했습니다.' : `다운로드 실패: ${res?.error || ''} → "탭 녹화"를 이용해 보세요.`);
 }
