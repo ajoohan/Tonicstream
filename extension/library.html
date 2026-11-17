@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <title>보관함 - Tonicstream</title>
+  <link rel="icon" href="icons/icon32.png">
+  <link rel="stylesheet" href="fonts/pretendard.css">
+  <link rel="stylesheet" href="popup.css">
+  <link rel="stylesheet" href="library.css">
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>레퍼런스 보관함</h1>
+        <p class="meta" id="count"></p>
+      </div>
+      <div class="tools">
+        <input id="q" type="text" placeholder="제목 · 사이트 · 태그 · 메모 검색" spellcheck="false">
+        <button id="csv">CSV 내보내기</button>
+        <button id="clear">전체 삭제</button>
+      </div>
+    </header>
+    <p class="meta note">저장한 영상의 제목·원본 주소·날짜·미리보기를 이 브라우저에만 기록합니다. 영상 파일은 다운로드 폴더에 있고, 여기서 기록을 지워도 파일은 지워지지 않습니다.</p>
+    <p id="msg"></p>
+    <div id="list"></div>
+  </main>
+  <script src="library.js"></script>
+</body>
+</html>

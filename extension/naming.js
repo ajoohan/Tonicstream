@@ -1,6 +1,6 @@
 // 저장 파일 이름·폴더 규칙. 배경(background), 팝업, 화면 녹화 창이 함께 쓴다.
 // 설정은 이 브라우저에만 저장된다(chrome.storage.local).
-const NAMING_DEFAULTS = { folder: '', pattern: 'title' }; // pattern: title | date_title | date_site_title
+const NAMING_DEFAULTS = { folder: '', pattern: 'title', library: true }; // pattern: title | date_title | date_site_title
 
 const safeName = s => (s || 'video').replace(/[\\/:*?"<>|~\u0000-\u001f]+/g, ' ').replace(/\s+/g, ' ').replace(/^[.\s]+|[.\s]+$/g, '').slice(0, 80) || 'video';
 

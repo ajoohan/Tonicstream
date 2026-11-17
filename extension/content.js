@@ -45,6 +45,7 @@ if (!window.__tonicstream) {
           duration: Number.isFinite(v.duration) ? v.duration : null,
           area: Math.round(r.width * r.height),
           playing: !v.paused,
+          time: v.currentTime || 0,
           directSrc: /^https?:/.test(v.currentSrc) ? v.currentSrc : null,
           // 다른 도메인에서 직접 불러온 영상(틱톡 등)은 브라우저가 녹화를 막음 → 원본 다운로드로 처리
           crossOrigin: /^https?:/.test(v.currentSrc) && new URL(v.currentSrc).origin !== location.origin && !v.crossOrigin,
@@ -95,7 +96,20 @@ if (!window.__tonicstream) {
     chrome.runtime.sendMessage({ type: 'videorec-state', recording: recs.size > 0 }).catch(() => {});
   }
 
-  async function startRecording(id, fromStart, title) {
+  // 보관함에 넣을 작은 미리보기 그림. 다른 도메인 영상처럼 꺼낼 수 없으면 빈 값.
+  function thumbOf(v) {
+    try {
+      if (!v?.videoWidth) return '';
+      const k = Math.min(1, 240 / Math.max(v.videoWidth, v.videoHeight));
+      const c = document.createElement('canvas');
+      c.width = Math.round(v.videoWidth * k); c.height = Math.round(v.videoHeight * k);
+      c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
+      return c.toDataURL('image/jpeg', 0.6);
+    } catch { return ''; }
+  }
+
+  // range: { from, to } 초 단위. 주어지면 그 구간만 녹화한다.
+  async function startRecording(id, fromStart, title, range) {
     const v = findVideo(id);
     if (!v) throw new Error('영상을 찾을 수 없습니다. 창을 새로고침(↻) 해주세요.');
     if (recs.has(id)) return;
@@ -103,8 +117,10 @@ if (!window.__tonicstream) {
       throw new Error('유튜브 광고가 재생 중입니다. 광고가 끝난 뒤 다시 눌러주세요.');
     }
 
-    if (fromStart && v.currentTime > 0.2) {
-      v.currentTime = 0;
+    const bounded = fromStart || !!range; // 끝이 정해진 녹화: 되감기면 종료
+    const startAt = range ? range.from : 0;
+    if (bounded && Math.abs(v.currentTime - startAt) > 0.2) {
+      v.currentTime = startAt;
       await once(v, 'seeked', 3000);
     }
     await v.play().catch(() => {});
@@ -138,12 +154,16 @@ if (!window.__tonicstream) {
       if (!hold && recorder.state === 'paused') recorder.resume();
     };
     let last = v.currentTime;
+    const startTime = v.currentTime;
+    let thumb = '';
     const onTime = () => {
       sync();
       if (adShowing()) { last = 0; return; } // 광고 중 시간 이동은 무시
       // 쇼츠/릴스/틱톡은 무한 반복 재생 → 처음으로 되감기면 한 바퀴 끝으로 보고 자동 종료
-      if (fromStart && v.currentTime < last - 0.5) return stopRecording(id);
+      if (bounded && v.currentTime < last - 0.5) return stopRecording(id);
+      if (range && v.currentTime >= range.to) return stopRecording(id);
       last = v.currentTime;
+      if (!thumb && v.currentTime > startTime + 0.5) thumb = thumbOf(v); // 첫 장면이 검은 화면인 경우가 많아 조금 지난 뒤 찍는다
     };
     const onStop = () => stopRecording(id);
     const handlers = { pause: sync, play: sync, timeupdate: onTime, ended: onStop, emptied: onStop };
@@ -164,7 +184,8 @@ if (!window.__tonicstream) {
       const filename = `${safeName(title || document.title)}.${ext}`; // 예비 저장용 이름
       // 자동 종료(영상 끝·한 바퀴 재생)는 클릭 없이 저장되므로, 다른 도메인·샌드박스 프레임에서도
       // 막히지 않는 브라우저 다운로드 기능으로 저장한다. 실패하면 링크 클릭으로 한 번 더 시도.
-      const res = await chrome.runtime.sendMessage({ type: 'save-blob', url, title: title || document.title, ext }).catch(() => null);
+      const res = await chrome.runtime.sendMessage({ type: 'save-blob', url, title: title || document.title, ext,
+        kind: range ? '구간 녹화' : '영상 녹화', thumb: thumb || thumbOf(v) }).catch(() => null);
       if (!res?.ok) {
         const a = Object.assign(document.createElement('a'), { href: url, download: filename });
         document.documentElement.appendChild(a);
@@ -193,7 +214,8 @@ if (!window.__tonicstream) {
       const blob = await new Promise((res, rej) => c.toBlob(b => b ? res(b) : rej(new Error('empty')), 'image/png'));
       const url = URL.createObjectURL(blob);
       setTimeout(() => URL.revokeObjectURL(url), 60_000);
-      const res = await chrome.runtime.sendMessage({ type: 'save-blob', url, title: title || document.title, ext: 'png', suffix });
+      const res = await chrome.runtime.sendMessage({ type: 'save-blob', url, title: title || document.title, ext: 'png', suffix,
+        kind: '장면 캡처', thumb: thumbOf(v) });
       if (!res?.ok) throw new Error(res?.error || '저장 실패');
       return { ok: true, width: c.width, height: c.height };
     } catch (e) {
@@ -211,11 +233,12 @@ if (!window.__tonicstream) {
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg.type === 'list') { sendResponse({ videos: list(), title: document.title }); return; }
     if (msg.type === 'record') {
-      startRecording(msg.id, msg.fromStart, msg.title)
+      startRecording(msg.id, msg.fromStart, msg.title, msg.range)
         .then(() => sendResponse({ ok: true }))
         .catch(e => sendResponse({ ok: false, error: e.message }));
       return true;
     }
+    if (msg.type === 'thumb') { sendResponse({ thumb: thumbOf(findVideo(msg.id)) }); return; }
     if (msg.type === 'snapshot') {
       snapshot(msg.id, msg.title).then(sendResponse, e => sendResponse({ ok: false, error: e.message }));
       return true;

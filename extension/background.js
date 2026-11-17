@@ -111,7 +111,11 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
   if (msg.type === 'save-blob') {
     buildName(msg.title, _sender.tab?.url || _sender.url, msg.ext, { suffix: msg.suffix })
-      .then(filename => chrome.downloads.download({ url: msg.url, filename, saveAs: false }))
+      .then(async filename => {
+        const id = await chrome.downloads.download({ url: msg.url, filename, saveAs: false });
+        logSave({ kind: msg.kind || '영상 녹화', title: msg.title, pageUrl: _sender.tab?.url || '', filename, downloadId: id, thumb: msg.thumb });
+        return id;
+      })
       .then(id => sendResponse({ ok: true, id }))
       .catch(e => sendResponse({ ok: false, error: e.message }));
     return true;
@@ -120,12 +124,19 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     shotTab(msg).then(() => sendResponse({ ok: true })).catch(e => sendResponse({ ok: false, error: e.message }));
     return true;
   }
+  if (msg.type === 'log-save') { logSave(msg.entry); return; }
+  if (msg.type === 'library-update') { updateLibrary(msg.id, msg.change).then(() => sendResponse({ ok: true })); return true; }
   if (msg.type === 'getMedia') {
     load().then(media => sendResponse(media[msg.tabId] || []));
     return true;
   }
   if (msg.type === 'download') {
-    buildName(msg.title, msg.pageUrl, msg.ext).then(filename => download(msg.url, filename))
+    buildName(msg.title, msg.pageUrl, msg.ext)
+      .then(async filename => {
+        const id = await download(msg.url, filename);
+        logSave({ kind: '원본 다운로드', title: msg.title, pageUrl: msg.pageUrl, filename, downloadId: id, thumb: msg.thumb });
+        return id;
+      })
       .then(id => sendResponse({ ok: true, id }))
       .catch(e => sendResponse({ ok: false, error: e.message }));
     return true;
@@ -191,7 +202,13 @@ async function startTabRecording(tabId, streamId, title, pageUrl) {
   await ensureOffscreen();
   const res = await chrome.runtime.sendMessage({ type: 'offscreen-tabrec-start', streamId, filename });
   if (!res?.ok) throw new Error(res?.error || '탭 녹화를 시작하지 못했습니다.');
-  await chrome.storage.session.set({ tabRec: { tabId, startedAt: Date.now() } });
+  // 보관함용 미리보기: 녹화를 시작한 탭이 지금 보이는 탭이면 화면을 한 장 찍어 둔다
+  let thumb = '';
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    if (tab.active) thumb = await makeThumb(await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'jpeg', quality: 60 }));
+  } catch {}
+  await chrome.storage.session.set({ tabRec: { tabId, startedAt: Date.now(), title, pageUrl, thumb } });
   updateBadge(tabId);
   openTabRecControl(tabId);
 }
@@ -220,8 +237,9 @@ async function stopTabRecording() {
 
 async function onTabRecEnded({ url, filename }) {
   // 저장을 먼저 시작한 뒤 녹화 상태를 지워야, 그 사이 숨겨진 페이지가 닫혀 임시 파일이 사라지지 않는다
-  if (url) await chrome.downloads.download({ url, filename, saveAs: false }).catch(e => console.warn('탭 녹화 저장 실패', e));
+  const id = url ? await chrome.downloads.download({ url, filename, saveAs: false }).catch(e => console.warn('탭 녹화 저장 실패', e)) : null;
   const { tabRec } = await chrome.storage.session.get('tabRec');
+  if (id != null) logSave({ kind: '탭 녹화', title: tabRec?.title, pageUrl: tabRec?.pageUrl, filename, downloadId: id, thumb: tabRec?.thumb });
   await chrome.storage.session.remove('tabRec');
   if (tabRec) updateBadge(tabRec.tabId);
   maybeCloseOffscreen();
@@ -333,12 +351,57 @@ async function shotTab({ tabId, windowId, rect, vw, title, pageUrl, suffix }) {
     if (w > 8 && h > 8) {
       const c = new OffscreenCanvas(w, h);
       c.getContext('2d').drawImage(img, x, y, w, h, 0, 0, w, h);
-      const bytes = new Uint8Array(await (await c.convertToBlob({ type: 'image/png' })).arrayBuffer());
-      let bin = '';
-      for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-      dataUrl = `data:image/png;base64,${btoa(bin)}`;
+      dataUrl = await blobToDataUrl(await c.convertToBlob({ type: 'image/png' }));
     }
   }
   const filename = await buildName(title, pageUrl, 'png', { suffix });
-  await chrome.downloads.download({ url: dataUrl, filename, saveAs: false });
+  const id = await chrome.downloads.download({ url: dataUrl, filename, saveAs: false });
+  logSave({ kind: '장면 캡처', title, pageUrl, filename, downloadId: id, thumb: await makeThumb(dataUrl).catch(() => '') });
+}
+
+async function blobToDataUrl(blob) {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return `data:${blob.type};base64,${btoa(bin)}`;
+}
+
+// 그림을 긴 변 240px 이하의 작은 JPEG로 줄인다 (보관함 미리보기용)
+async function makeThumb(dataUrl) {
+  const img = await createImageBitmap(await (await fetch(dataUrl)).blob());
+  const k = Math.min(1, 240 / Math.max(img.width, img.height));
+  const c = new OffscreenCanvas(Math.max(1, Math.round(img.width * k)), Math.max(1, Math.round(img.height * k)));
+  c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+  return blobToDataUrl(await c.convertToBlob({ type: 'image/jpeg', quality: 0.6 }));
+}
+
+// ── 레퍼런스 보관함 ─────────────────────────────────────
+// 저장할 때마다 제목·원본 주소·날짜·미리보기를 이 브라우저에만 기록한다(chrome.storage.local).
+// 영상 파일 자체는 보관하지 않는다. 설정에서 끌 수 있다.
+const LIBRARY_MAX = 300;
+let libraryQueue = Promise.resolve();
+function logSave(entry) {
+  libraryQueue = libraryQueue.then(async () => {
+    if (!(await getNaming()).library) return;
+    const { library = [] } = await chrome.storage.local.get('library');
+    library.unshift({
+      id: crypto.randomUUID(), ts: Date.now(), kind: entry.kind || '', title: (entry.title || '').slice(0, 200),
+      pageUrl: /^https?:/.test(entry.pageUrl || '') ? entry.pageUrl : '', site: siteOf(entry.pageUrl),
+      filename: entry.filename || '', downloadId: entry.downloadId ?? null,
+      thumb: (entry.thumb || '').length < 60_000 ? entry.thumb || '' : '', memo: '', tags: '',
+    });
+    library.length = Math.min(library.length, LIBRARY_MAX);
+    await chrome.storage.local.set({ library });
+  }).catch(e => console.warn('보관함 기록 실패', e));
+  return libraryQueue;
+}
+
+function updateLibrary(id, change) {
+  libraryQueue = libraryQueue.then(async () => {
+    const { library = [] } = await chrome.storage.local.get('library');
+    const next = id == null ? [] : change === null ? library.filter(x => x.id !== id)
+      : library.map(x => x.id === id ? { ...x, memo: String(change.memo ?? x.memo).slice(0, 500), tags: String(change.tags ?? x.tags).slice(0, 200) } : x);
+    await chrome.storage.local.set({ library: next });
+  }).catch(e => console.warn('보관함 수정 실패', e));
+  return libraryQueue;
 }

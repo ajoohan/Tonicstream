@@ -71,7 +71,8 @@ async function start() {
   const chunks = [];
   const name = fileName();
   recorder.ondataavailable = e => e.data.size && chunks.push(e.data);
-  recorder.onstop = () => finish(chunks, recorder.mimeType || mimeType || 'video/webm', name);
+  const thumbP = grabThumb(display);
+  recorder.onstop = () => finish(chunks, recorder.mimeType || mimeType || 'video/webm', name, thumbP);
   recorder.onerror = () => recorder.state !== 'inactive' && recorder.stop();
   // 브라우저의 "공유 중지"를 누르거나 녹화하던 창이 닫히면 자동 저장
   video.addEventListener('ended', stop);
@@ -110,7 +111,22 @@ function cleanup() {
   chrome.action.setBadgeText({ text: '' });
 }
 
-async function finish(chunks, type, name) {
+// 보관함 미리보기용: 녹화 화면의 한 장면을 작은 그림으로
+async function grabThumb(stream) {
+  try {
+    const v = Object.assign(document.createElement('video'), { muted: true, srcObject: new MediaStream(stream.getVideoTracks()) });
+    await v.play();
+    await new Promise(r => setTimeout(r, 400));
+    const k = Math.min(1, 240 / Math.max(v.videoWidth, v.videoHeight));
+    const c = document.createElement('canvas');
+    c.width = Math.round(v.videoWidth * k); c.height = Math.round(v.videoHeight * k);
+    c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
+    v.srcObject = null;
+    return c.toDataURL('image/jpeg', 0.6);
+  } catch { return ''; }
+}
+
+async function finish(chunks, type, name, thumbP) {
   cleanup();
   if (myWindowId != null) chrome.windows.update(myWindowId, { state: 'normal', focused: true }).catch(() => {});
   if (!chunks.length) { show('idle'); say('녹화된 내용이 없습니다.'); return; }
@@ -119,7 +135,9 @@ async function finish(chunks, type, name) {
   try {
     // 저장이 끝날 때까지 이 창이 열려 있어야 임시 주소(blob)가 유지된다
     // 이름에 이미 날짜가 있으므로 저장 폴더 설정만 적용
-    await chrome.downloads.download({ url, filename: await buildName(name, '', ext, { plain: true }), saveAs: false });
+    const filename = await buildName(name, '', ext, { plain: true });
+    const downloadId = await chrome.downloads.download({ url, filename, saveAs: false });
+    chrome.runtime.sendMessage({ type: 'log-save', entry: { kind: '화면 녹화', title: name, pageUrl: '', filename, downloadId, thumb: await thumbP } }).catch(() => {});
     $('#saved').textContent = `저장했습니다: ${name}.${ext}`;
   } catch (e) {
     $('#saved').textContent = `저장하지 못했습니다: ${e.message}`;

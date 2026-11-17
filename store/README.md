@@ -7,7 +7,7 @@
 - 업로드 파일: https://stream.plustonic.com/tonicstream-extension.zip
   - `extension/` 폴더를 압축한 파일로, 배포할 때마다 자동으로 새로 만들어집니다.
   - `manifest.json`이 압축 파일 맨 위에 있어서 그대로 올리면 됩니다.
-- 버전: 0.6.0
+- 버전: 0.7.0
 
 ## 2. 속성 (Properties)
 
@@ -39,6 +39,8 @@ Tonicstream은 브라우저에서 재생 중인 영상을 MP4 파일로 저장�
 ■ 편의 기능
 • 장면 캡처: 지금 보이는 영상 장면을 PNG 이미지로 저장합니다.
 • 저장 설정: 저장 폴더와 파일 이름 규칙(날짜_사이트_제목 등)을 정할 수 있습니다.
+• 구간 녹화: 시작·끝 시간을 정해 필요한 부분만 저장합니다.
+• 레퍼런스 보관함: 저장한 영상의 제목·원본 주소·날짜·미리보기를 모아 보고, 메모와 태그를 달고, CSV로 내보냅니다. 기록은 내 브라우저에만 저장됩니다.
 
 ■ 이렇게 사용하세요
 1. 영상이 있는 페이지에서 툴바의 Tonicstream 아이콘을 누릅니다. (단축키 Alt+Shift+V)
@@ -73,6 +75,8 @@ Tonicstream saves the video you are watching in your browser as an MP4 file.
 ■ Extras
 • Frame capture: save the current video frame as a PNG image.
 • Save settings: choose a subfolder and a file naming rule (e.g. date_site_title).
+• Range recording: set a start and end time to save only that part.
+• Reference library: a local list of what you saved (title, source URL, date, thumbnail) with notes, tags and CSV export. Stored only in your browser.
 
 ■ How to use
 1. On a page with a video, click the Tonicstream icon (shortcut Alt+Shift+V).
@@ -111,7 +115,7 @@ Permission justifications:
 - tabCapture + offscreen: "Tab recording" feature, started only by an explicit user click in the popup; the offscreen document runs MediaRecorder and fetches files for download.
 - Screen recording (no extra permission): the user clicks a button in the extension's own recorder window, which calls navigator.mediaDevices.getDisplayMedia so the user picks the screen/window/tab in the browser's picker. The microphone is used only if the user ticks "record microphone". The file is saved locally with downloads.
 - Frame capture: draws the current <video> frame to a canvas and saves a PNG. For cross-origin videos (tainted canvas) it falls back to chrome.tabs.captureVisibleTab and crops to the video; this runs only when the user clicks "장면 캡처".
-- storage (local): the user's save folder and file naming preference.
+- storage (local): the user's save folder and file naming preference, and the reference library (title, source URL, date, small thumbnail, user notes/tags of saved items). Nothing leaves the browser; the user can delete entries or turn logging off.
 - scripting + activeTab: inject the content script into frames that loaded before installation when the user opens the popup.
 - storage: keep the list of detected files per tab for the current session (chrome.storage.session).
 
