@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <title>● 탭 녹화 중 - Tonicstream</title>
+  <link rel="stylesheet" href="fonts/pretendard.css">
+  <link rel="stylesheet" href="popup.css">
+  <style>
+    body { width: auto; min-height: 100vh; padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; }
+    .top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+    .big { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--accent); margin: 0; }
+    #what { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #stop { width: 100%; padding: 10px 12px; font-size: 15px; }
+    .hint { font-size: 12px; margin: 0; }
+  </style>
+</head>
+<body>
+  <div class="top"><p class="big" id="timer">● 0:00</p><span class="meta">탭 녹화</span></div>
+  <p class="meta" id="what"></p>
+  <button class="primary" id="stop">정지 후 저장</button>
+  <p class="meta hint" id="hint">이 창은 녹화 영상에 찍히지 않습니다.</p>
+  <script src="tabctl.js"></script>
+</body>
+</html>
