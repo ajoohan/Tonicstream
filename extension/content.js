@@ -117,7 +117,15 @@ if (!window.__tonicstream) {
     }
 
     const mimeType = pickMime();
-    const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 8_000_000 });
+    let recorder;
+    try {
+      recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 8_000_000 });
+      recorder.start(1000);
+    } catch (e) {
+      throw new Error(e.name === 'SecurityError'
+        ? '이 영상은 녹화가 차단되어 있습니다. 아래 "탭 녹화"를 이용하세요.'
+        : '아직 영상이 준비되지 않았습니다. 영상을 재생한 뒤 다시 눌러주세요.');
+    }
     const chunks = [];
     recorder.ondataavailable = e => e.data.size && chunks.push(e.data);
 
@@ -147,22 +155,25 @@ if (!window.__tonicstream) {
       syncState();
     };
 
-    recorder.onstop = () => {
+    recorder.onstop = async () => {
       cleanup();
       if (!chunks.length) return;
       const type = recorder.mimeType || mimeType || 'video/webm';
       const ext = type.includes('mp4') ? 'mp4' : 'webm';
       const url = URL.createObjectURL(new Blob(chunks, { type }));
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${safeName(title || document.title)}.${ext}`;
-      document.documentElement.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      const filename = `${safeName(title || document.title)}.${ext}`;
+      // 자동 종료(영상 끝·한 바퀴 재생)는 클릭 없이 저장되므로, 다른 도메인·샌드박스 프레임에서도
+      // 막히지 않는 브라우저 다운로드 기능으로 저장한다. 실패하면 링크 클릭으로 한 번 더 시도.
+      const res = await chrome.runtime.sendMessage({ type: 'save-blob', url, filename }).catch(() => null);
+      if (!res?.ok) {
+        const a = Object.assign(document.createElement('a'), { href: url, download: filename });
+        document.documentElement.appendChild(a);
+        a.click();
+        a.remove();
+      }
+      setTimeout(() => URL.revokeObjectURL(url), 5 * 60_000);
     };
 
-    recorder.start(1000);
     sync(); // 자동재생이 막혀 멈춰 있으면 재생될 때까지 대기
     recs.set(id, { recorder, startedAt: Date.now() });
     syncState();

@@ -45,12 +45,14 @@ function isSegmentUrl(u) {
 chrome.webRequest.onHeadersReceived.addListener(
   async details => {
     if (details.tabId < 0) return;
+    if (details.statusCode !== 200 && details.statusCode !== 206) return; // 리다이렉트·오류 응답 제외
     const type = header(details.responseHeaders, 'content-type').split(';')[0].trim().toLowerCase();
     const url = new URL(details.url);
     const looksVideo = /^video\/(mp4|webm|quicktime)$/.test(type) || /\.(mp4|webm|mov)$/i.test(url.pathname);
     if (!looksVideo || isSegmentUrl(url)) return;
     const size = totalSize(details.responseHeaders);
-    if (size && size < 100 * 1024) return; // 아이콘/미리보기 같은 아주 작은 파일 제외
+    const sizeKnown = !!(header(details.responseHeaders, 'content-range') || header(details.responseHeaders, 'content-length'));
+    if (sizeKnown && size < 100 * 1024) return; // 빈 응답, 아이콘/미리보기 같은 아주 작은 파일 제외
 
     const media = await load();
     const list = (media[details.tabId] ||= []);
@@ -66,8 +68,8 @@ chrome.webRequest.onHeadersReceived.addListener(
 
 // 배지: 탭/영상 녹화 중이면 REC, 아니면 감지된 원본 파일 개수
 async function updateBadge(tabId) {
-  const [media, { tabRec, videoRecs }] = await Promise.all([load(), chrome.storage.session.get(['tabRec', 'videoRecs'])]);
-  const rec = tabRec?.tabId === tabId || !!videoRecs?.[tabId]?.length;
+  const [media, { tabRec, videoRecs, screenRec }] = await Promise.all([load(), chrome.storage.session.get(['tabRec', 'videoRecs', 'screenRec'])]);
+  const rec = !!screenRec || tabRec?.tabId === tabId || !!videoRecs?.[tabId]?.length;
   const n = media[tabId]?.length || 0;
   if (rec) chrome.action.setBadgeBackgroundColor({ tabId, color: '#e5484d' }).catch(() => {});
   chrome.action.setBadgeText({ tabId, text: rec ? 'REC' : n ? String(n) : '' }).catch(() => {});
@@ -105,6 +107,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (_sender.tab?.id >= 0) setVideoRec(_sender.tab.id, _sender.frameId, msg.recording);
     return;
   }
+  if (msg.type === 'save-blob') {
+    chrome.downloads.download({ url: msg.url, filename: msg.filename, saveAs: false })
+      .then(id => sendResponse({ ok: true, id }))
+      .catch(e => sendResponse({ ok: false, error: e.message }));
+    return true;
+  }
   if (msg.type === 'getMedia') {
     load().then(media => sendResponse(media[msg.tabId] || []));
     return true;
@@ -121,38 +129,49 @@ const isTikTokCdn = url => {
   try { const h = new URL(url).hostname; return TIKTOK_CDN.some(d => h === d || h.endsWith('.' + d)); } catch { return false; }
 };
 
-let offscreenJobs = 0; // 숨겨진 페이지에서 진행 중인 받기/저장 작업 수
+let fetchesInFlight = 0; // 숨겨진 페이지에서 받는 중인 틱톡 영상 수
+const EXT_BLOB = `blob:chrome-extension://${chrome.runtime.id}/`;
 
 async function download(url, filename) {
   if (!isTikTokCdn(url)) return chrome.downloads.download({ url, filename, saveAs: false });
   // 틱톡: 다운로드 API 요청에는 Referer를 붙일 수 없어서, 숨겨진 페이지에서 받아 저장
-  await ensureOffscreen();
-  offscreenJobs++;
+  fetchesInFlight++;
   try {
+    await ensureOffscreen();
     const res = await chrome.runtime.sendMessage({ type: 'offscreen-fetch', url });
     if (!res?.ok) throw new Error(res?.error || '받기 실패');
-    offscreenJobs++; // 아래 저장이 끝날 때 downloads.onChanged에서 감소
+    // 저장이 시작된 뒤(in_progress)에 카운트를 내려야 숨겨진 페이지가 먼저 닫히지 않는다
     return await chrome.downloads.download({ url: res.url, filename, saveAs: false });
   } finally {
-    offscreenJobs--;
+    fetchesInFlight--;
+    maybeCloseOffscreen();
   }
 }
 
+// 동시에 두 번 불려도 문서를 한 번만 만들도록 진행 중인 생성 작업을 공유
+let creatingOffscreen = null;
 async function ensureOffscreen() {
   if (await chrome.offscreen.hasDocument()) return;
-  await chrome.offscreen.createDocument({
+  creatingOffscreen ??= chrome.offscreen.createDocument({
     url: 'offscreen.html', reasons: ['BLOBS', 'USER_MEDIA'], justification: '영상 파일 저장 및 탭 녹화',
-  });
+  }).finally(() => { creatingOffscreen = null; });
+  await creatingOffscreen;
 }
 
-// 저장이 끝나면 숨겨진 페이지를 닫아 메모리 정리 (탭 녹화 중이면 유지)
-chrome.downloads.onChanged.addListener(async d => {
-  if (!d.state || d.state.current === 'in_progress') return;
-  const [item] = await chrome.downloads.search({ id: d.id });
-  if (!item?.url.startsWith(`blob:chrome-extension://${chrome.runtime.id}/`)) return;
-  offscreenJobs = Math.max(0, offscreenJobs - 1);
-  const { tabRec } = await chrome.storage.session.get('tabRec');
-  if (!tabRec && offscreenJobs === 0 && (await chrome.offscreen.hasDocument())) chrome.offscreen.closeDocument().catch(() => {});
+// 숨겨진 페이지는 받는 중인 파일, 탭 녹화, 확장이 만든 임시 파일(blob)의 저장이 모두 끝났을 때만 닫는다.
+// 저장 건수를 세지 않고 매번 실제 상태를 확인하므로, 화면 녹화 저장 등이 섞여도 어긋나지 않는다.
+async function maybeCloseOffscreen() {
+  if (fetchesInFlight > 0 || creatingOffscreen) return;
+  const [{ tabRec }, active] = await Promise.all([
+    chrome.storage.session.get('tabRec'),
+    chrome.downloads.search({ state: 'in_progress' }),
+  ]);
+  if (tabRec || fetchesInFlight > 0 || active.some(d => d.url.startsWith(EXT_BLOB))) return;
+  if (await chrome.offscreen.hasDocument()) chrome.offscreen.closeDocument().catch(() => {});
+}
+
+chrome.downloads.onChanged.addListener(d => {
+  if (d.state && d.state.current !== 'in_progress') maybeCloseOffscreen();
 });
 
 // ── 탭 전체 녹화 ─────────────────────────────────────────
@@ -192,13 +211,12 @@ async function stopTabRecording() {
 }
 
 async function onTabRecEnded({ url, filename }) {
+  // 저장을 먼저 시작한 뒤 녹화 상태를 지워야, 그 사이 숨겨진 페이지가 닫혀 임시 파일이 사라지지 않는다
+  if (url) await chrome.downloads.download({ url, filename, saveAs: false }).catch(e => console.warn('탭 녹화 저장 실패', e));
   const { tabRec } = await chrome.storage.session.get('tabRec');
   await chrome.storage.session.remove('tabRec');
   if (tabRec) updateBadge(tabRec.tabId);
-  if (url) {
-    offscreenJobs++;
-    chrome.downloads.download({ url, filename, saveAs: false }).catch(() => { offscreenJobs--; });
-  }
+  maybeCloseOffscreen();
 }
 
 chrome.tabs.onRemoved.addListener(async tabId => {
@@ -211,7 +229,13 @@ chrome.tabs.onRemoved.addListener(async tabId => {
 // 팝업을 열지 않고 바로 정지·저장한다.
 
 // 영상 요소 녹화 상태: { [tabId]: [frameId, ...] }  (frameId null = 탭 전체 정리)
-async function setVideoRec(tabId, frameId, recording) {
+// 여러 프레임이 동시에 알려와도 읽기-수정-쓰기가 겹치지 않도록 순서대로 처리
+let videoRecQueue = Promise.resolve();
+function setVideoRec(tabId, frameId, recording) {
+  videoRecQueue = videoRecQueue.then(() => applyVideoRec(tabId, frameId, recording)).catch(e => console.warn(e));
+  return videoRecQueue;
+}
+async function applyVideoRec(tabId, frameId, recording) {
   const { videoRecs = {} } = await chrome.storage.session.get('videoRecs');
   const frames = new Set(frameId == null ? [] : videoRecs[tabId] || []);
   if (recording) frames.add(frameId); else if (frameId != null) frames.delete(frameId);
@@ -221,15 +245,42 @@ async function setVideoRec(tabId, frameId, recording) {
   updateBadge(tabId);
 }
 
-async function refreshAction() {
-  const { tabRec, screenRec, videoRecs = {} } = await chrome.storage.session.get(['tabRec', 'screenRec', 'videoRecs']);
-  const any = !!tabRec || !!screenRec || Object.keys(videoRecs).length > 0;
-  await chrome.action.setPopup({ popup: any ? '' : 'popup.html' });
-  await chrome.action.setTitle({ title: any ? '녹화 중 · 클릭하면 정지 후 저장' : '영상 저장' });
+// 탭·영상 녹화는 해당 탭에서만, 화면 녹화는 모든 탭에서 아이콘이 정지 버튼이 된다.
+// 다른 탭에서는 평소처럼 팝업이 열린다.
+let refreshQueue = Promise.resolve();
+function refreshAction() {
+  refreshQueue = refreshQueue.then(applyAction).catch(e => console.warn(e));
+  return refreshQueue;
 }
+async function applyAction() {
+  const { tabRec, screenRec, videoRecs = {}, stopTabs = [] } =
+    await chrome.storage.session.get(['tabRec', 'screenRec', 'videoRecs', 'stopTabs']);
+  const STOP = { popup: '', title: '녹화 중 · 클릭하면 정지 후 저장' };
+  const NORMAL = { popup: 'popup.html', title: '영상 저장' };
+  const base = screenRec ? STOP : NORMAL;
+  await chrome.action.setPopup({ popup: base.popup });
+  await chrome.action.setTitle({ title: base.title });
+  const recTabs = new Set(Object.keys(videoRecs).map(Number));
+  if (tabRec) recTabs.add(tabRec.tabId);
+  // 전에 정지 버튼으로 바꿨던 탭도 함께 다시 맞춘다 (탭별 설정은 따로 지우는 방법이 없음)
+  for (const tabId of new Set([...recTabs, ...stopTabs])) {
+    const v = recTabs.has(tabId) ? STOP : base;
+    await chrome.action.setPopup({ tabId, popup: v.popup }).catch(() => {});
+    await chrome.action.setTitle({ tabId, title: v.title }).catch(() => {});
+  }
+  // 한 번이라도 바꾼 탭은 계속 기억해 두어야 이후 화면 녹화 시작·종료 때 함께 맞출 수 있다 (닫힌 탭은 제외)
+  await chrome.storage.session.set({ stopTabs: [...new Set([...stopTabs, ...recTabs])] });
+}
+chrome.tabs.onRemoved.addListener(async tabId => {
+  const { stopTabs = [] } = await chrome.storage.session.get('stopTabs');
+  if (stopTabs.includes(tabId)) chrome.storage.session.set({ stopTabs: stopTabs.filter(t => t !== tabId) });
+});
 
-chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === 'session' && (changes.tabRec || changes.screenRec || changes.videoRecs)) refreshAction();
+chrome.storage.onChanged.addListener(async (changes, area) => {
+  if (area !== 'session' || !(changes.tabRec || changes.screenRec || changes.videoRecs)) return;
+  refreshAction();
+  // 화면 녹화가 시작·종료되면 원본 파일 개수를 보여주던 탭들의 배지도 REC로 맞춘다
+  if (changes.screenRec) for (const tabId of Object.keys(await load())) updateBadge(Number(tabId));
 });
 chrome.runtime.onStartup.addListener(refreshAction);
 chrome.runtime.onInstalled.addListener(refreshAction);
@@ -252,10 +303,8 @@ async function stopFromAction(tab) {
     if (!res?.recording) chrome.storage.session.remove('screenRec');
     return;
   }
-  if (tabRec) return stopTabRecording();
-  // 다른 탭의 영상 녹화만 진행 중이면 평소처럼 팝업을 연다
-  await chrome.action.setPopup({ popup: 'popup.html' });
-  await chrome.action.openPopup().catch(() => {});
-  refreshAction();
+  // 녹화 상태가 이미 끝났는데 아이콘만 남은 경우: 상태를 다시 맞추고 팝업을 연다
+  await refreshAction();
+  chrome.action.openPopup().catch(() => {});
 }
 chrome.action.onClicked.addListener(stopFromAction);
