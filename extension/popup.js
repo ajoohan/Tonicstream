@@ -13,6 +13,7 @@ function el(tag, props = {}, ...kids) {
 
 let frameIds = null;
 
+let docIds = new Set(); // 지금 페이지를 이루는 문서들
 async function frameVideos() {
   // 창을 열 때 한 번만 content.js를 모든 프레임에 주입(이미 있으면 무시)하고, 이후엔 목록만 다시 요청
   if (!frameIds || $('#refresh').dataset.force) {
@@ -21,6 +22,7 @@ async function frameVideos() {
       target: { tabId: tab.id, allFrames: true }, files: ['content.js'],
     }).catch(() => []);
     frameIds = injected.map(r => r.frameId);
+    docIds = new Set(injected.map(r => r.documentId).filter(Boolean));
     // 주입이 막힌 경우에도 매니페스트로 이미 들어가 있는 맨 위 프레임에는 물어본다
     if (!frameIds.length) frameIds = [0];
   }
@@ -34,7 +36,7 @@ async function frameVideos() {
 async function send(frameId, msg) {
   const res = await chrome.tabs.sendMessage(tab.id, msg, { frameId }).catch(e => ({ ok: false, error: e.message }));
   if (res && !res.ok) say(`${res.error} → 아래 "탭 녹화"를 이용해 보세요.`);
-  else if (msg.type === 'record' && msg.range) say(`${fmtTime(msg.range.from)}~${fmtTime(msg.range.to)} 구간을 녹화합니다. 끝 지점에서 자동으로 저장됩니다.`);
+  else if (msg.type === 'record' && msg.range) say(`${fmtTime(msg.range.from)}~${fmtTime(Math.min(msg.range.to, msg.duration ?? msg.range.to))} 구간을 녹화합니다. 끝 지점에서 자동으로 저장됩니다.`);
   else if (msg.type === 'record') say('녹화를 시작했습니다. 페이지 위의 "정지 후 저장" 또는 툴바의 Tonicstream 아이콘을 누르면 바로 저장됩니다.');
   setTimeout(render, 300);
 }
@@ -81,9 +83,12 @@ function rangeForm(v, title) {
   const from = el('input', { type: 'text', value: fmtTime(v.time), inputMode: 'numeric' });
   const to = el('input', { type: 'text', value: fmtTime(v.duration), inputMode: 'numeric' });
   const go = el('button', { className: 'primary', textContent: '이 구간 녹화', onclick: () => {
-    const a = parseTime(from.value), b = Math.min(parseTime(to.value), v.duration);
-    if (!(a >= 0) || !(b > a)) return say('구간을 다시 확인해 주세요. 예) 시작 0:10, 끝 0:25');
-    send(v.frameId, { type: 'record', id: v.id, fromStart: false, title, range: { from: a, to: b } });
+    const a = parseTime(from.value);
+    let b = parseTime(to.value);
+    if (!(a >= 0) || !(b > a) || a >= v.duration) return say('구간을 다시 확인해 주세요. 예) 시작 0:10, 끝 0:25');
+    // 화면에는 초 단위로 내림해 보여주므로(59.9초 → 0:59), 끝을 영상 끝으로 둔 경우 마지막 1초가 잘리지 않게 끝까지 녹화한다
+    if (b >= Math.floor(v.duration)) b = v.duration + 1;
+    send(v.frameId, { type: 'record', id: v.id, fromStart: false, title, range: { from: a, to: b }, duration: v.duration });
   } });
   return el('div', { className: 'range', hidden: true },
     el('label', {}, '시작', from), el('label', {}, '끝', to), go,
@@ -184,7 +189,9 @@ async function render() {
   renderTabRec(rec);
   $('#videos').replaceChildren(...(videos.length ? videos.map(videoCard)
     : [el('p', { className: 'empty', textContent: '재생 중인 영상이 없습니다. 영상을 재생하거나 아래 "탭 녹화"를 이용하세요.' })]));
-  $('#files').replaceChildren(...(files?.length ? files.map(fileCard)
+  // 뒤로 가기 등으로 다른 페이지의 파일이 남아 있으면 지금 페이지 것만 보여준다
+  const mine = (files || []).filter(f => !f.documentId || !docIds.size || docIds.has(f.documentId));
+  $('#files').replaceChildren(...(mine.length ? mine.map(fileCard)
     : [el('p', { className: 'empty', textContent: '감지된 원본 파일이 없습니다.' })]));
 }
 
@@ -196,14 +203,22 @@ async function initNaming() {
   lib.onchange = () => update(true);
   const update = async save => {
     const n = { folder: safeFolder(folder.value), pattern: pattern.value, library: lib.checked };
-    if (save) { await chrome.storage.local.set({ naming: n }); folder.value = n.folder; }
+    if (save) await chrome.storage.local.set({ naming: n });
+    if (save === 'tidy') folder.value = n.folder; // 입력을 마쳤을 때만 칸의 글자를 정리
     $('#nm-preview').textContent = `예) 다운로드/${formatName(n, tab?.title || '영상 제목', tab?.url || 'https://www.youtube.com/', 'mp4')}`;
   };
-  folder.oninput = () => update(false);
-  folder.onchange = () => update(true);
+  // 팝업은 바깥을 누르면 바로 닫히므로 글자를 칠 때마다 저장한다
+  folder.oninput = () => update(true);
+  folder.onchange = () => update('tidy');
   pattern.onchange = () => update(true);
   update(false);
 }
+
+// 버튼을 누르는 도중 목록을 다시 그리면 그 버튼이 사라져 클릭이 먹지 않으므로, 누르고 있는 동안은 건너뛴다
+let pressing = false;
+addEventListener('pointerdown', () => { pressing = true; }, true);
+addEventListener('pointerup', () => setTimeout(() => { pressing = false; }, 50), true);
+addEventListener('pointercancel', () => { pressing = false; }, true);
 
 (async () => {
   [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -217,11 +232,11 @@ async function initNaming() {
     $('#files').replaceChildren(el('p', { className: 'empty', textContent: '감지된 원본 파일이 없습니다.' }));
     $('#tabrec').replaceChildren(el('span', { className: 'meta', textContent: '웹페이지에서만 쓸 수 있습니다.' }));
     $('#refresh').onclick = renderScreenRec;
-    setInterval(() => { if (document.querySelector('.rec')) renderScreenRec(); }, 1000);
+    setInterval(() => { if (!pressing && document.querySelector('.rec')) renderScreenRec(); }, 1000);
     return;
   }
   $('#refresh').onclick = () => { $('#refresh').dataset.force = '1'; render(); };
   await render();
   // 구간 입력칸이 열려 있으면 입력 중인 값이 지워지지 않게 새로 그리지 않는다
-  setInterval(() => { if (document.querySelector('.rec') && !document.querySelector('.range:not([hidden])')) render(); }, 1000);
+  setInterval(() => { if (!pressing && document.querySelector('.rec') && !document.querySelector('.range:not([hidden])')) render(); }, 1000);
 })();

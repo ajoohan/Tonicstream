@@ -17,14 +17,16 @@ function tick() {
   if (startedAt) $('#timer').textContent = `● ${fmt((Date.now() - startedAt) / 1000)}`;
 }
 
-function ended() {
+async function ended() {
   startedAt = null;
   document.title = 'Tonicstream';
-  $('#timer').textContent = '저장했습니다';
-  $('#timer').style.color = 'var(--fg)';
+  const { tabRecResult } = await chrome.storage.session.get('tabRecResult');
+  const saved = tabRecResult?.saved !== false;
+  $('#timer').textContent = saved ? '저장했습니다' : '저장하지 못했습니다';
+  if (saved) $('#timer').style.color = 'var(--fg)';
   $('#stop').hidden = true;
-  $('#hint').textContent = '다운로드 폴더를 확인하세요. 이 창은 곧 닫힙니다.';
-  setTimeout(() => window.close(), 2500);
+  $('#hint').textContent = saved ? '다운로드 폴더를 확인하세요. 이 창은 곧 닫힙니다.' : '녹화된 내용이 없거나 저장 중 문제가 생겼습니다. 다시 녹화해 주세요.';
+  setTimeout(() => window.close(), saved ? 2500 : 8000);
 }
 
 $('#stop').onclick = async () => {

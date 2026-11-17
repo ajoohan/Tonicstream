@@ -93,7 +93,7 @@ if (!window.__tonicstream) {
   // 배경에 녹화 상태를 알려 툴바 아이콘(REC 배지, 한 번 클릭 정지)을 맞춘다
   function syncState() {
     if (recs.size) showBar(); else hideBar();
-    chrome.runtime.sendMessage({ type: 'videorec-state', recording: recs.size > 0 }).catch(() => {});
+    tell({ type: 'videorec-state', recording: recs.size > 0 });
   }
 
   // 보관함에 넣을 작은 미리보기 그림. 다른 도메인 영상처럼 꺼낼 수 없으면 빈 값.
@@ -110,6 +110,13 @@ if (!window.__tonicstream) {
 
   // range: { from, to } 초 단위. 주어지면 그 구간만 녹화한다.
   const starting = new Set(); // 시작 준비 중(되감기·재생 대기)인 영상
+  // 확장이 업데이트·재시작되면 sendMessage가 바로 오류를 던진다. 그래도 녹화 저장은 이어지도록 감싼다.
+  function tell(msg) {
+    try { return chrome.runtime.sendMessage(msg).catch(() => null); } catch { return Promise.resolve(null); }
+  }
+  // 페이지를 떠나면 녹화도 끝나므로 툴바 아이콘 상태를 되돌린다
+  addEventListener('pagehide', () => { if (recs.size) tell({ type: 'videorec-state', recording: false }); });
+
   async function startRecording(id, fromStart, title, range) {
     if (recs.has(id) || starting.has(id)) return; // 버튼을 연달아 눌러도 한 번만 시작
     starting.add(id);
@@ -189,8 +196,8 @@ if (!window.__tonicstream) {
       const filename = `${safeName(title || document.title)}.${ext}`; // 예비 저장용 이름
       // 자동 종료(영상 끝·한 바퀴 재생)는 클릭 없이 저장되므로, 다른 도메인·샌드박스 프레임에서도
       // 막히지 않는 브라우저 다운로드 기능으로 저장한다. 실패하면 링크 클릭으로 한 번 더 시도.
-      const res = await chrome.runtime.sendMessage({ type: 'save-blob', url, title: title || document.title, ext,
-        kind: range ? '구간 녹화' : '영상 녹화', thumb: thumb || thumbOf(v) }).catch(() => null);
+      const res = await tell({ type: 'save-blob', url, title: title || document.title, ext,
+        kind: range ? '구간 녹화' : '영상 녹화', thumb: thumb || thumbOf(v) });
       if (!res?.ok) {
         const a = Object.assign(document.createElement('a'), { href: url, download: filename });
         document.documentElement.appendChild(a);
@@ -219,7 +226,7 @@ if (!window.__tonicstream) {
       const blob = await new Promise((res, rej) => c.toBlob(b => b ? res(b) : rej(new Error('empty')), 'image/png'));
       const url = URL.createObjectURL(blob);
       setTimeout(() => URL.revokeObjectURL(url), 60_000);
-      const res = await chrome.runtime.sendMessage({ type: 'save-blob', url, title: title || document.title, ext: 'png', suffix,
+      const res = await tell({ type: 'save-blob', url, title: title || document.title, ext: 'png', suffix,
         kind: '장면 캡처', thumb: thumbOf(v) });
       if (!res?.ok) throw new Error(res?.error || '저장 실패');
       return { ok: true, width: c.width, height: c.height };

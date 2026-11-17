@@ -109,6 +109,7 @@ function cleanup() {
   document.title = 'Tonicstream 화면 녹화';
   chrome.storage.session.remove('screenRec');
   chrome.action.setBadgeText({ text: '' });
+  chrome.action.setBadgeBackgroundColor({ color: '#5f6368' });
 }
 
 // 보관함 미리보기용: 녹화 화면의 한 장면을 작은 그림으로
