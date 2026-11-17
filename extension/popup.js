@@ -156,6 +156,8 @@ function renderTabRec(rec) {
 const RECORDER_URL = chrome.runtime.getURL('recorder.html');
 
 async function openRecorder() {
+  // 시크릿 창에서 시작한 화면 녹화는 보관함에 남기지 않도록 알려 둔다
+  await chrome.storage.session.set({ screenRecIncognito: !!tab?.incognito });
   const [existing] = await chrome.runtime.getContexts({ contextTypes: ['TAB'], documentUrls: [RECORDER_URL] });
   if (existing) await chrome.windows.update(existing.windowId, { state: 'normal', focused: true });
   else await chrome.windows.create({ url: RECORDER_URL, type: 'popup', width: 400, height: 380, focused: true });

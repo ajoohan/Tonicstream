@@ -24,7 +24,8 @@
 <meta name="twitter:description" content="쇼츠·릴스·틱톡부터 화면 녹화까지, 클릭 한 번에 MP4로 저장하는 Edge·Chrome 확장 프로그램.">
 <meta name="twitter:image" content="https://stream.plustonic.com/og.jpg">
 <link rel="icon" href="assets/icon128.png">
-<link rel="preload" as="image" href="assets/promo-poster.jpg">
+<link rel="preload" as="image" href="assets/promo-poster.jpg" media="(min-width: 721px)">
+<link rel="preload" as="image" href="assets/promo-mobile-poster.jpg" media="(max-width: 720px)">
 <link rel="stylesheet" href="fonts/pretendard/pretendardvariable-dynamic-subset.css">
 <style>
 :root {
@@ -43,9 +44,9 @@ a { color: inherit; }
 .narrow { max-width: 880px; }
 
 nav .wrap { display: flex; align-items: center; justify-content: space-between; height: 64px; }
-.logo { display: flex; align-items: center; gap: 10px; font-weight: 700; text-decoration: none; }
+.logo { display: flex; align-items: center; gap: 10px; font-weight: 700; text-decoration: none; min-height: 44px; }
 .logo img { width: 26px; height: 26px; }
-.nav-btn { font-size: 15px; font-weight: 600; text-decoration: none; padding: 8px 14px; border: 1px solid var(--line); border-radius: 10px; }
+.nav-btn { font-size: 15px; font-weight: 600; text-decoration: none; padding: 10px 14px; min-height: 44px; display: inline-flex; align-items: center; border: 1px solid var(--line); border-radius: 10px; }
 .nav-btn:hover { border-color: #3a3a44; }
 
 .btn { display: inline-block; padding: 14px 26px; border-radius: 12px; font-weight: 600; text-decoration: none; background: var(--accent); color: #fff; box-shadow: 0 8px 30px -8px rgba(255,90,95,.6); }
@@ -60,10 +61,14 @@ h1 em { font-style: normal; color: var(--accent); }
 .meta { font-size: 14px; color: var(--muted); margin-top: 16px; }
 
 /* ---------- product film ---------- */
-.reel { margin: 0 auto 120px; max-width: 1080px; }
+.reel { margin: 0 auto 120px; max-width: 1080px; position: relative; }
+#reel-toggle { position: absolute; right: 14px; bottom: 14px; width: 44px; height: 44px; border-radius: 50%; border: 1px solid rgba(255,255,255,.18);
+  background: rgba(13,13,16,.72); color: #fff; font-size: 13px; cursor: pointer; display: grid; place-items: center; backdrop-filter: blur(6px); }
+#reel-toggle:hover { background: rgba(13,13,16,.9); }
+#reel-toggle:focus-visible, .btn:focus-visible, .nav-btn:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
 .reel video { display: block; width: 100%; height: auto; aspect-ratio: 16 / 9; border-radius: 18px; border: 1px solid #2c2c34;
   background: #0d0d10; box-shadow: 0 0 0 1px rgba(255,255,255,.03), 0 40px 120px rgba(0,0,0,.6), 0 0 160px rgba(255,90,95,.10); }
-@media (max-width: 720px) { .reel video { border-radius: 12px; } }
+@media (max-width: 720px) { .reel video { border-radius: 14px; aspect-ratio: 4 / 5; } .reel { max-width: 480px; } }
 
 /* ---------- features ---------- */
 .features { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 16px; overflow: hidden; }
@@ -84,7 +89,7 @@ code { font: 15px ui-monospace, monospace; color: var(--fg); }
 
 footer { border-top: 1px solid var(--line); padding: 28px 0 40px; color: var(--muted); font-size: 14px; }
 footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
-footer a { text-decoration: none; }
+footer a { text-decoration: none; display: inline-flex; align-items: center; min-height: 44px; }
 
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; } }
 </style>
@@ -103,15 +108,17 @@ footer a { text-decoration: none; }
     <h1>보고 있는 영상,<br><em>MP4</em>로 저장.</h1>
     <p class="lead">쇼츠 · 릴스 · 틱톡부터 화면 녹화까지, 클릭 한 번이면 끝.</p>
     <a class="btn" href="tonicstream-extension.zip" download>무료 다운로드</a>
-    <p class="meta">Edge · Chrome 확장 프로그램 · v0.7.2</p>
+    <p class="meta">Edge · Chrome 확장 프로그램 · v0.7.3</p>
   </section>
 
   <section class="wrap">
     <figure class="reel">
-      <video id="reel" autoplay muted loop playsinline preload="metadata" poster="assets/promo-poster.jpg" width="1280" height="720"
+      <video id="reel" autoplay muted loop playsinline preload="metadata" poster="assets/promo-poster.jpg"
         aria-label="Tonicstream 기능 소개 영상: 영상 녹화, 구간 녹화, 장면 캡처, 화면 녹화, 레퍼런스 보관함">
+        <source src="assets/promo-mobile.mp4" type="video/mp4" media="(max-width: 720px)">
         <source src="assets/promo.mp4" type="video/mp4">
       </video>
+      <button id="reel-toggle" type="button" aria-label="영상 일시정지" aria-pressed="false">❚❚</button>
     </figure>
   </section>
 
@@ -146,10 +153,21 @@ footer a { text-decoration: none; }
 </footer>
 
 <script>
-  // "동작 줄이기"를 켠 사용자에게는 영상을 자동으로 틀지 않고, 직접 재생할 수 있게 조작 버튼을 보여준다
   (function () {
-    var v = document.getElementById('reel');
-    if (v && matchMedia('(prefers-reduced-motion: reduce)').matches) { v.removeAttribute('autoplay'); v.pause(); v.controls = true; }
+    var v = document.getElementById('reel'), btn = document.getElementById('reel-toggle');
+    if (!v) return;
+    // 휴대폰 폭에서는 세로(4:5) 영상을 쓰므로 첫 화면 그림도 세로용으로 바꾼다
+    if (matchMedia('(max-width: 720px)').matches) v.poster = 'assets/promo-mobile-poster.jpg';
+    // "동작 줄이기"를 켠 사용자에게는 자동으로 틀지 않는다
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) { v.removeAttribute('autoplay'); v.pause(); }
+    // 일시정지·재생 버튼 (반복 영상을 멈출 수 있게)
+    function sync() {
+      btn.textContent = v.paused ? '▶' : '❚❚';
+      btn.setAttribute('aria-label', v.paused ? '영상 재생' : '영상 일시정지');
+      btn.setAttribute('aria-pressed', String(v.paused));
+    }
+    btn.addEventListener('click', function () { if (v.paused) v.play(); else v.pause(); });
+    v.addEventListener('play', sync); v.addEventListener('pause', sync); sync();
   })();
 </script>
 </body>
