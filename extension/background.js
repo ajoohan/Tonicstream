@@ -166,6 +166,23 @@ async function startTabRecording(tabId, streamId, filename) {
   if (!res?.ok) throw new Error(res?.error || '탭 녹화를 시작하지 못했습니다.');
   await chrome.storage.session.set({ tabRec: { tabId, startedAt: Date.now() } });
   updateBadge(tabId);
+  openTabRecControl(tabId);
+}
+
+// 녹화 중 "정지 후 저장" 버튼이 항상 보이도록 작은 조절 창을 브라우저 창 오른쪽 아래에 띄운다.
+// (별도 창이라 탭 녹화 화면에는 찍히지 않음)
+async function openTabRecControl(tabId) {
+  const W = 320, H = 200;
+  const opts = { url: 'tabctl.html', type: 'popup', width: W, height: H, focused: true };
+  try {
+    const { windowId } = await chrome.tabs.get(tabId);
+    const w = await chrome.windows.get(windowId);
+    if (w.state === 'normal' || w.state === 'maximized') {
+      opts.left = Math.max(0, w.left + w.width - W - 24);
+      opts.top = Math.max(0, w.top + w.height - H - 24);
+    }
+  } catch {}
+  await chrome.windows.create(opts).catch(() => chrome.windows.create({ url: 'tabctl.html', type: 'popup', width: W, height: H }));
 }
 
 async function stopTabRecording() {

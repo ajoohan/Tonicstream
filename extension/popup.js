@@ -81,7 +81,7 @@ async function startTabRec() {
   try {
     const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id });
     const res = await chrome.runtime.sendMessage({ type: 'tabrec-start', tabId: tab.id, streamId, filename: safeName(tab.title) });
-    say(res?.ok ? '녹화를 시작했습니다. 툴바의 Tonicstream 아이콘을 한 번 누르면 바로 정지·저장됩니다.' : res?.error);
+    say(res?.ok ? '' : res?.error);
   } catch (e) {
     say(`탭 녹화를 시작하지 못했습니다: ${e.message}`);
   }
