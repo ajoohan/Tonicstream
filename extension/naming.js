@@ -2,10 +2,21 @@
 // 설정은 이 브라우저에만 저장된다(chrome.storage.local).
 const NAMING_DEFAULTS = { folder: '', pattern: 'title', library: true }; // pattern: title | date_title | date_site_title
 
-const safeName = s => (s || 'video').replace(/[\\/:*?"<>|~\u0000-\u001f]+/g, ' ').replace(/\s+/g, ' ').replace(/^[.\s]+|[.\s]+$/g, '').slice(0, 80) || 'video';
+// 파일·폴더 이름에 쓸 수 없는 글자를 걸러낸다.
+// - \ / : * ? " < > | ~ 와 제어 문자
+// - 눈에 보이지 않는 서식 문자(결합 이모지를 잇는 글자, 폭 없는 공백, 방향 표시 등): 브라우저가 "Invalid filename"으로 거절한다
+// - CON, NUL 같은 Windows 예약 이름
+const NAME_BAD = /[\\/:*?"<>|~\p{Cc}\p{Cf}]+/gu;
+const NAME_RESERVED = /^(con|prn|aux|nul|com\d|lpt\d)$/i;
+function cleanPart(s, max) {
+  let t = String(s || '').replace(NAME_BAD, ' ').replace(/\s+/g, ' ').replace(/^[.\s]+|[.\s]+$/g, '');
+  t = [...t].slice(0, max).join('').replace(/[.\s]+$/g, ''); // 글자 단위로 잘라 이모지가 반쪽 나지 않게
+  return NAME_RESERVED.test(t) ? `_${t}` : t;
+}
+const safeName = s => cleanPart(s, 80) || 'video';
 
 // "Tonicstream/레퍼런스" 같은 하위 폴더 경로. 다운로드 폴더 밖으로는 나갈 수 없다.
-const safeFolder = s => (s || '').split(/[\\/]+/).map(p => p.replace(/[:*?"<>|~\u0000-\u001f]+/g, ' ').replace(/^[.\s]+|[.\s]+$/g, '').slice(0, 60)).filter(Boolean).slice(0, 4).join('/');
+const safeFolder = s => String(s || '').split(/[\\/]+/).map(p => cleanPart(p, 60)).filter(Boolean).slice(0, 4).join('/');
 
 const siteOf = url => { try { return new URL(url).hostname.replace(/^(www|m)\./, ''); } catch { return ''; } };
 
@@ -31,4 +42,17 @@ function formatName(naming, title, pageUrl, ext, { plain = false, suffix = '' } 
 
 async function buildName(title, pageUrl, ext, opts) {
   return formatName(await getNaming(), title, pageUrl, ext, opts);
+}
+
+// 저장을 시작한다. 이름이 거절되면(예상 못 한 글자 등) 녹화본을 잃지 않도록 안전한 기본 이름으로 한 번 더 시도한다.
+async function safeDownload(url, filename) {
+  try {
+    return await chrome.downloads.download({ url, filename, saveAs: false });
+  } catch (e) {
+    const d = new Date(), p = n => String(n).padStart(2, '0');
+    const ext = (filename.match(/\.([a-z0-9]{2,4})$/i) || [, 'mp4'])[1];
+    const fallback = `Tonicstream ${today(d)} ${p(d.getHours())}-${p(d.getMinutes())}-${p(d.getSeconds())}.${ext}`;
+    console.warn('저장 이름이 거절되어 기본 이름으로 저장합니다:', filename, e);
+    return chrome.downloads.download({ url, filename: fallback, saveAs: false });
+  }
 }

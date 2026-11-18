@@ -108,7 +108,7 @@ footer a { text-decoration: none; display: inline-flex; align-items: center; min
     <h1>보고 있는 영상,<br><em>MP4</em>로 저장.</h1>
     <p class="lead">쇼츠 · 릴스 · 틱톡부터 화면 녹화까지, 클릭 한 번이면 끝.</p>
     <a class="btn" href="tonicstream-extension.zip" download>무료 다운로드</a>
-    <p class="meta">Edge · Chrome 확장 프로그램 · v0.7.4</p>
+    <p class="meta">Edge · Chrome 확장 프로그램 · v0.7.5</p>
   </section>
 
   <section class="wrap">
@@ -119,12 +119,19 @@ footer a { text-decoration: none; display: inline-flex; align-items: center; min
         // 휴대폰 폭이면 세로(4:5) 영상, 아니면 가로(16:9) 영상을 고른다.
         // (<source media>를 무시하는 브라우저가 있어 여기서 직접 정한다)
         (function () {
-          var v = document.getElementById('reel'), m = matchMedia('(max-width: 720px)').matches;
-          v.poster = m ? 'assets/promo-mobile-poster.jpg' : 'assets/promo-poster.jpg';
-          v.src = m ? 'assets/promo-mobile.mp4' : 'assets/promo.mp4';
+          var v = document.getElementById('reel'), mq = matchMedia('(max-width: 720px)');
+          function pick() {
+            var m = mq.matches, was = !v.paused;
+            v.poster = m ? 'assets/promo-mobile-poster.jpg' : 'assets/promo-poster.jpg';
+            v.src = m ? 'assets/promo-mobile.mp4' : 'assets/promo.mp4';
+            if (was) v.play().catch(function () {});
+          }
+          pick();
+          // 휴대폰을 돌리거나 창 폭을 바꾸면 영상 틀의 비율도 바뀌므로 그에 맞는 영상으로 바꾼다
+          if (mq.addEventListener) mq.addEventListener('change', pick); else if (mq.addListener) mq.addListener(pick);
         })();
       </script>
-      <noscript><img src="assets/promo-poster.jpg" alt="Tonicstream 기능 소개" style="width:100%;border-radius:18px"></noscript>
+      <noscript><style>#reel, #reel-toggle { display: none; }</style><img src="assets/promo-poster.jpg" alt="Tonicstream 기능 소개" style="width:100%;border-radius:18px"></noscript>
       <button id="reel-toggle" type="button" aria-label="영상 일시정지" aria-pressed="false">❚❚</button>
     </figure>
   </section>

@@ -187,11 +187,14 @@ async function renderScreenRec() {
 let showOthers = false;
 function videoList(videos) {
   if (!videos.length) return [el('p', { className: 'empty', textContent: '재생 중인 영상이 없습니다. 영상을 재생하거나 아래 "탭 녹화"를 이용하세요.' })];
-  const main = videos.filter(v => v.recording || v.active);
+  // 멈춰 둔 영상도 화면에 크게 보이고 있으면 계속 보여준다 (원하는 장면에서 멈추고 캡처·구간 지정하는 경우)
+  const biggest = Math.max(0, ...videos.filter(v => v.visible).map(v => v.area));
+  const isMain = v => v.recording || v.active || (v.visible && v.area >= biggest * 0.5);
+  const main = videos.filter(isMain);
   if (!main.length || main.length === videos.length) return videos.map(videoCard);
-  const others = videos.filter(v => !(v.recording || v.active));
+  const others = videos.filter(v => !isMain(v));
   const box = el('details', { className: 'others', open: showOthers },
-    el('summary', { textContent: `다른 영상 ${others.length}개 ` }, el('small', { textContent: '화면에 보이지 않거나 멈춰 있는 영상' })),
+    el('summary', { textContent: `다른 영상 ${others.length}개 ` }, el('small', { textContent: '화면 밖에 있거나 작게 보이는 영상' })),
     ...others.map((v, i) => videoCard(v, i + main.length)));
   // 펼친 상태를 기억해 두어야 1초마다 다시 그릴 때 도로 접히지 않는다
   box.querySelector('summary').addEventListener('click', () => { showOthers = !box.open; });
