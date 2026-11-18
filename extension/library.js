@@ -3,7 +3,7 @@
 const $ = s => document.querySelector(s);
 const say = t => { $('#msg').textContent = t || ''; };
 let items = [];
-const view = { board: '*', kind: '', minRating: 0, sort: 'new' }; // board: '*' 전체, '' 미분류, 그 밖은 보드 이름
+const view = { board: null, kind: '', minRating: 0, sort: 'new' }; // board: null 전체, '' 미분류, 그 밖은 보드 이름
 
 function el(tag, props = {}, ...kids) {
   const e = Object.assign(document.createElement(tag), props);
@@ -45,7 +45,7 @@ function stars(it) {
 function card(it) {
   const thumb = el('div', { className: 'thumb', textContent: it.thumb ? '' : '미리보기 없음' });
   if (it.thumb.startsWith('data:image/')) thumb.style.backgroundImage = `url("${it.thumb}")`;
-  const board = el('input', { type: 'text', value: boardOf(it), placeholder: '보드 (예: 가을 캠페인)', onchange: e => update(it.id, { board: e.target.value.trim() }) });
+  const board = el('input', { type: 'text', value: boardOf(it), placeholder: '보드 (예: 가을 캠페인)', onchange: e => edit(it.id, { board: e.target.value.trim() }) });
   board.setAttribute('list', 'boards');
   const tags = el('input', { type: 'text', value: it.tags, placeholder: '태그 (쉼표로 구분)', onchange: e => edit(it.id, { tags: e.target.value.trim() }) });
   const memo = el('input', { type: 'text', value: it.memo, placeholder: '메모', onchange: e => edit(it.id, { memo: e.target.value.trim() }) });
@@ -65,7 +65,7 @@ function card(it) {
 function shown() {
   const q = $('#q').value.trim().toLowerCase();
   const list = items.filter(it =>
-    (view.board === '*' || boardOf(it) === view.board) &&
+    (view.board === null || boardOf(it) === view.board) &&
     (!view.kind || it.kind === view.kind) &&
     ratingOf(it) >= view.minRating &&
     (!q || [it.title, it.site, it.tags, it.memo, it.kind, it.filename, boardOf(it)].join(' ').toLowerCase().includes(q)));
@@ -74,11 +74,12 @@ function shown() {
 
 function renderFilters() {
   const bs = boards();
-  if (view.board !== '*' && view.board !== '' && !bs.includes(view.board)) view.board = '*';
+  const none = items.filter(it => !boardOf(it)).length;
+  // 고른 보드가 없어졌으면(이름 변경·삭제, 미분류가 0개가 됨) 전체 보기로 돌아간다
+  if ((view.board && !bs.includes(view.board)) || (view.board === '' && !(bs.length && none))) view.board = null;
   const chip = (label, value, n) => el('button', { type: 'button', className: 'chipbtn' + (view.board === value ? ' on' : ''),
     textContent: `${label} ${n}`, onclick: () => { view.board = value; render(); } });
-  const none = items.filter(it => !boardOf(it)).length;
-  $('#boardbar').replaceChildren(chip('전체', '*', items.length),
+  $('#boardbar').replaceChildren(chip('전체', null, items.length),
     ...bs.map(b => chip(b, b, items.filter(it => boardOf(it) === b).length)),
     ...(bs.length && none ? [chip('미분류', '', none)] : []));
   $('#boards').replaceChildren(...bs.map(b => el('option', { value: b })));
@@ -116,7 +117,7 @@ function exportCsv() {
 function exportHtml() {
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const list = shown();
-  const title = view.board === '*' ? '레퍼런스 보관함' : view.board === '' ? '미분류 레퍼런스' : view.board;
+  const title = view.board === null ? '레퍼런스 보관함' : view.board === '' ? '미분류 레퍼런스' : view.board;
   const cards = list.map(it => `
   <article>
     ${/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(it.thumb) ? `<img src="${it.thumb}" alt="">` : '<div class="noimg">미리보기 없음</div>'}
@@ -155,19 +156,25 @@ function exportHtml() {
 </main></body></html>`, 'text/html;charset=utf-8', `tonicstream-${title.replace(/[\\/:*?"<>|]+/g, ' ').trim() || '보관함'}-${stamp()}.html`);
 }
 
+// 버튼을 누르는 도중 다시 그리면 그 버튼이 사라져 클릭이 먹지 않으므로, 누르는 동안은 미룬다
+let pressing = false;
+addEventListener('pointerdown', () => { pressing = true; }, true);
+addEventListener('pointerup', () => setTimeout(() => { pressing = false; flush(); }, 60), true);
+addEventListener('pointercancel', () => { pressing = false; }, true);
+
 async function load() {
   items = (await chrome.storage.local.get('library')).library || [];
   // 방금 메모·태그를 고쳤거나 입력 중인 칸이 있으면 미뤘다가 그린다
-  if (Date.now() < quietUntil || document.activeElement?.matches('#list input')) {
+  if (pressing || Date.now() < quietUntil || document.activeElement?.matches('#list input')) {
     pendingRender = true;
-    renderFilters(); // 보드 버튼과 개수는 입력 칸 밖이라 바로 맞춘다
+    if (!pressing) renderFilters(); // 보드 버튼과 개수는 입력 칸 밖이라 바로 맞춘다 (누르는 중이면 클릭이 끝난 뒤에)
     if (Date.now() < quietUntil) setTimeout(flush, quietUntil - Date.now() + 50);
     return;
   }
   render();
 }
 function flush() {
-  if (pendingRender && Date.now() >= quietUntil && !document.activeElement?.matches('#list input')) { pendingRender = false; render(); }
+  if (pendingRender && !pressing && Date.now() >= quietUntil && !document.activeElement?.matches('#list input')) { pendingRender = false; render(); }
 }
 $('#list').addEventListener('focusout', () => setTimeout(flush, 200));
 
