@@ -44,6 +44,11 @@ function mixAudio(tracks) {
 
 async function start() {
   say('');
+  // 화면 선택 창이 잘리지 않게, 창이 작아져 있으면 먼저 키운다
+  if (myWindowId != null) {
+    const w = await chrome.windows.get(myWindowId).catch(() => null);
+    if (w && (w.state !== 'normal' || w.width < BIG.width || w.height < BIG.height)) { resize(BIG); await new Promise(r => setTimeout(r, 200)); }
+  }
   let display, mic;
   try {
     display = await navigator.mediaDevices.getDisplayMedia({
@@ -142,7 +147,7 @@ async function finish(chunks, type, name, thumbP) {
     // 저장이 끝날 때까지 이 창이 열려 있어야 임시 주소(blob)가 유지된다
     // 이름에 이미 날짜가 있으므로 저장 폴더 설정만 적용
     const filename = await buildName(name, '', ext, { plain: true });
-    const downloadId = await chrome.downloads.download({ url, filename, saveAs: false });
+    const downloadId = await safeDownload(url, filename);
     const { screenRecIncognito } = await chrome.storage.session.get('screenRecIncognito');
     chrome.runtime.sendMessage({ type: 'log-save', entry: { kind: '화면 녹화', title: name, pageUrl: '', filename, downloadId, thumb: await thumbP, incognito: !!screenRecIncognito } }).catch(() => {});
     // 긴 녹화는 파일을 쓰는 데 시간이 걸린다. 다 쓸 때까지 창을 닫지 못하게 한다 (닫으면 임시 파일이 사라져 저장이 끊긴다)

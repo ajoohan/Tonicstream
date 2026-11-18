@@ -32,7 +32,8 @@ if (!(() => { try { return typeof window.__tonicstream === 'function' && window.
   ];
   const pickMime = () => MIME_CANDIDATES.find(t => MediaRecorder.isTypeSupported(t)) || '';
 
-  const safeName = s => (s || 'video').replace(/[\\/:*?"<>|~\u0000-\u001f]+/g, ' ').replace(/^[.\s]+|[.\s]+$/g, '').slice(0, 80) || 'video';
+  // 예비 저장(링크 클릭)용 이름. 평소 이름은 배경(background)의 naming.js가 만든다. 규칙은 그쪽과 같게 유지.
+  const safeName = s => [...String(s || '').replace(/[\\/:*?"<>|~\p{Cc}\p{Cf}]+/gu, ' ').replace(/\s+/g, ' ').replace(/^[.\s]+|[.\s]+$/g, '')].slice(0, 80).join('') || 'video';
 
   function list() {
     return [...document.querySelectorAll('video')]
@@ -44,6 +45,7 @@ if (!(() => { try { return typeof window.__tonicstream === 'function' && window.
         return {
           id,
           active: !v.paused && r.width > 0 && r.bottom > 0 && r.top < innerHeight,
+          visible: r.width > 0 && r.height > 0 && r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth,
           width: v.videoWidth,
           height: v.videoHeight,
           duration: Number.isFinite(v.duration) ? v.duration : null,

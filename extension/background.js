@@ -136,7 +136,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === 'save-blob') {
     buildName(msg.title, _sender.tab?.url || _sender.url, msg.ext, { suffix: msg.suffix })
       .then(async filename => {
-        const id = await chrome.downloads.download({ url: msg.url, filename, saveAs: false });
+        const id = await safeDownload(msg.url, filename);
         logSave({ kind: msg.kind || '영상 녹화', title: msg.title, pageUrl: _sender.tab?.url || '', filename, downloadId: id, thumb: msg.thumb, incognito: _sender.tab?.incognito });
         return id;
       })
@@ -175,7 +175,7 @@ let fetchesInFlight = 0; // 숨겨진 페이지에서 받는 중인 틱톡 영�
 const EXT_BLOB = `blob:chrome-extension://${chrome.runtime.id}/`;
 
 async function download(url, filename) {
-  if (!isTikTokCdn(url)) return chrome.downloads.download({ url, filename, saveAs: false });
+  if (!isTikTokCdn(url)) return safeDownload(url, filename);
   // 틱톡: 다운로드 API 요청에는 Referer를 붙일 수 없어서, 숨겨진 페이지에서 받아 저장
   fetchesInFlight++;
   try {
@@ -183,7 +183,7 @@ async function download(url, filename) {
     const res = await chrome.runtime.sendMessage({ type: 'offscreen-fetch', url });
     if (!res?.ok) throw new Error(res?.error || '받기 실패');
     // 저장이 시작된 뒤(in_progress)에 카운트를 내려야 숨겨진 페이지가 먼저 닫히지 않는다
-    return await chrome.downloads.download({ url: res.url, filename, saveAs: false });
+    return await safeDownload(res.url, filename);
   } finally {
     fetchesInFlight--;
     maybeCloseOffscreen();
@@ -292,7 +292,7 @@ function onTabRecEnded(msg) {
 }
 async function finishTabRec({ url, filename }) {
   // 저장을 먼저 시작한 뒤 녹화 상태를 지워야, 그 사이 숨겨진 페이지가 닫혀 임시 파일이 사라지지 않는다
-  const id = url ? await chrome.downloads.download({ url, filename, saveAs: false }).catch(e => console.warn('탭 녹화 저장 실패', e)) : null;
+  const id = url ? await safeDownload(url, filename).catch(e => console.warn('탭 녹화 저장 실패', e)) : null;
   const { tabRec } = await chrome.storage.session.get('tabRec');
   // 녹화 정보를 모르면(이미 정리됨) 시크릿 창 여부도 알 수 없으므로 보관함에 남기지 않는다
   if (id != null && tabRec) logSave({ kind: '탭 녹화', title: tabRec.title, pageUrl: tabRec.pageUrl, filename, downloadId: id, thumb: tabRec.thumb, incognito: tabRec.incognito });
@@ -428,7 +428,7 @@ async function shotTab({ tabId, windowId, rect, vw, title, pageUrl, suffix }) {
     }
   }
   const filename = await buildName(title, pageUrl, 'png', { suffix });
-  const id = await chrome.downloads.download({ url: dataUrl, filename, saveAs: false });
+  const id = await safeDownload(dataUrl, filename);
   logSave({ kind: '장면 캡처', title, pageUrl, filename, downloadId: id, thumb: await makeThumb(dataUrl).catch(() => ''), incognito: active?.incognito });
 }
 
