@@ -170,7 +170,7 @@ async function renderScreenRec() {
   const box = $('#screenrec');
   if (screenRec) {
     box.replaceChildren(
-      el('span', { className: 'rec', textContent: `● 화면 녹화 중 ${fmtTime((Date.now() - screenRec.startedAt) / 1000)}` }),
+      el('span', { className: 'rec', textContent: `${screenRec.pausedAt ? '❚❚ 일시정지' : '● 화면 녹화 중'} ${fmtTime(((screenRec.pausedAt || Date.now()) - screenRec.startedAt - (screenRec.pausedMs || 0)) / 1000)}` }),
       el('button', { className: 'primary', textContent: '정지 후 저장', onclick: async () => {
         const res = await chrome.runtime.sendMessage({ type: 'screenrec-stop' }).catch(() => null);
         if (!res?.recording) await chrome.storage.session.remove('screenRec'); // 녹화 창이 이미 사라진 경우 표시만 정리
@@ -223,10 +223,11 @@ async function initNaming() {
   const quality = $('#nm-quality'), board = $('#nm-board'), hover = $('#nm-hover');
   folder.value = naming.folder; pattern.value = naming.pattern; lib.checked = naming.library;
   quality.value = naming.quality; board.value = naming.board; hover.value = naming.hover;
-  // 이미 쓰고 있는 보드 이름을 고를 수 있게 제안
-  chrome.storage.local.get('library').then(({ library = [] }) => {
+  // 이미 쓰고 있는 보드 이름을 고를 수 있게 제안. 보관함 전체를 읽어야 해서, 팝업을 열 때가 아니라 칸을 누를 때 한 번만 읽는다.
+  board.addEventListener('focus', async () => {
+    const { library = [] } = await chrome.storage.local.get('library');
     $('#nm-boards').replaceChildren(...[...new Set(library.map(x => x.board).filter(Boolean))].map(b => el('option', { value: b })));
-  });
+  }, { once: true });
   lib.onchange = quality.onchange = hover.onchange = () => update(true);
   board.oninput = () => update(true);
   const update = async save => {

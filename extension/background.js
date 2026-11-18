@@ -135,10 +135,18 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
   if (msg.type === 'save-video-url') {
     // 페이지의 "저장" 버튼(content.js)이 보낸 원본 영상 주소 저장. 영상 파일 형식만 허용한다.
-    const m = /^https?:/.test(msg.url || '') && new URL(msg.url).pathname.match(/\.(mp4|webm|mov)$/i);
-    const ext = m ? m[1].toLowerCase() : 'mp4';
-    if (!_sender.tab || !/^https?:/.test(msg.url || '')) { sendResponse({ ok: false, error: '잘못된 요청입니다.' }); return; }
-    buildName(msg.title, _sender.tab.url, ext)
+    // 주소가 영상 파일(.mp4 등)이거나, 그 탭에서 실제로 영상으로 받아진 것이 확인된 주소여야 한다.
+    let u = null;
+    try { u = new URL(msg.url); } catch {}
+    if (!_sender.tab || !u || !/^https?:$/.test(u.protocol)) { sendResponse({ ok: false, error: '잘못된 요청입니다.' }); return; }
+    load().then(media => {
+        const seen = (media[_sender.tab.id] || []).find(f => f.url === msg.url);
+        const byPath = u.pathname.match(/\.(mp4|webm|mov)$/i)?.[1].toLowerCase();
+        const byType = seen && { 'video/webm': 'webm', 'video/quicktime': 'mov', 'video/mp4': 'mp4' }[seen.type];
+        const ext = byPath || byType;
+        if (!ext) throw new Error('영상 파일로 확인되지 않은 주소입니다.');
+        return buildName(msg.title, _sender.tab.url, ext);
+      })
       .then(async filename => {
         const id = await download(msg.url, filename);
         logSave({ kind: '원본 다운로드', title: msg.title, pageUrl: _sender.tab.url, filename, downloadId: id, thumb: msg.thumb, incognito: _sender.tab.incognito });

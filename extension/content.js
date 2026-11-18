@@ -126,9 +126,14 @@ if (!(() => { try { return typeof window.__tonicstream === 'function' && window.
   // 저장 설정(화질, 저장 버튼 표시)을 읽어 두고 바뀌면 따라간다. 값의 뜻은 naming.js 참고.
   const BITS = { high: 8_000_000, medium: 4_000_000, small: 1_500_000 };
   let settings = { quality: 'high', hover: 'ads' };
-  const loadSettings = () => { try { chrome.storage.local.get('naming').then(r => { settings = { ...settings, ...r.naming }; }).catch(() => {}); } catch {} };
+  // 모든 탭·프레임이 저장소 변경 알림을 받지 않도록, 녹화를 시작할 때와 마우스를 올릴 때만(최대 5초에 한 번) 읽는다.
+  let settingsAt = 0;
+  const loadSettings = async () => {
+    settingsAt = Date.now();
+    try { settings = { ...settings, ...(await chrome.storage.local.get('naming')).naming }; } catch {}
+    return settings;
+  };
   loadSettings();
-  try { chrome.storage.onChanged.addListener((c, area) => { if (area === 'local' && c.naming) loadSettings(); }); } catch {}
 
   async function startRecording(id, fromStart, title, range) {
     if (recs.has(id) || starting.has(id)) return; // 버튼을 연달아 눌러도 한 번만 시작
@@ -158,6 +163,7 @@ if (!(() => { try { return typeof window.__tonicstream === 'function' && window.
     }
 
     const mimeType = pickMime();
+    await loadSettings(); // 방금 바꾼 화질 설정도 반영
     let recorder;
     try {
       recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: BITS[settings.quality] || BITS.high });
@@ -267,7 +273,8 @@ if (!(() => { try { return typeof window.__tonicstream === 'function' && window.
   let hb = null, hbVideo = null, hbBusy = false, hbLast = 0;
 
   function hoverButton() {
-    if (hb) return hb;
+    if (hb?.isConnected) return hb;
+    hb?.remove();
     const host = document.createElement('div');
     host.style.cssText = 'all:initial;position:fixed;z-index:2147483646;display:none';
     const root = host.attachShadow({ mode: 'closed' });
@@ -307,9 +314,19 @@ if (!(() => { try { return typeof window.__tonicstream === 'function' && window.
     return { ok: true, text: '녹화 시작' };
   }
 
+  // 버튼이 화면에 남아 탭 녹화나 장면 캡처에 찍히지 않도록, 마우스가 멈춘 지 2.5초가 지나거나
+  // 페이지 밖으로 나가거나 창이 뒤로 가면(팝업을 열 때 포함) 숨긴다.
+  let hbHideTimer = null;
+  const hideHover = () => { if (hb && !hbBusy) hb.style.display = 'none'; };
+  document.documentElement.addEventListener('mouseleave', hideHover);
+  addEventListener('blur', hideHover);
   addEventListener('mousemove', e => {
     if (e.timeStamp - hbLast < 150) return;
     hbLast = e.timeStamp;
+    if (!window.__tonicstream()) return hideHover(); // 확장이 새로 고쳐져 이 스크립트가 죽은 상태면 아무것도 하지 않음
+    if (Date.now() - settingsAt > 5000) loadSettings();
+    clearTimeout(hbHideTimer);
+    hbHideTimer = setTimeout(hideHover, 2500);
     if (!hoverOn()) { if (hb) hb.style.display = 'none'; return; }
     // 영상이 다른 요소에 덮여 있는 사이트가 많아, 마우스 아래에 겹쳐 있는 것들 중에서 영상을 찾는다
     const v = document.elementsFromPoint(e.clientX, e.clientY).find(x => x.tagName === 'VIDEO');
@@ -323,7 +340,7 @@ if (!(() => { try { return typeof window.__tonicstream === 'function' && window.
     b.style.top = `${Math.max(8, r.top + 10)}px`;
     b.style.left = `${Math.max(8, Math.min(innerWidth - 110, r.right - 100))}px`;
   }, { passive: true, capture: true });
-  addEventListener('scroll', () => { if (hb && !hbBusy) hb.style.display = 'none'; }, { passive: true, capture: true });
+  addEventListener('scroll', hideHover, { passive: true, capture: true });
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg.type === 'list') { sendResponse({ videos: list(), title: document.title }); return; }
@@ -335,6 +352,7 @@ if (!(() => { try { return typeof window.__tonicstream === 'function' && window.
     }
     if (msg.type === 'thumb') { sendResponse({ thumb: thumbOf(findVideo(msg.id)) }); return; }
     if (msg.type === 'snapshot') {
+      if (hb) hb.style.display = 'none'; // 캡처에 버튼이 찍히지 않게
       snapshot(msg.id, msg.title).then(sendResponse, e => sendResponse({ ok: false, error: e.message }));
       return true;
     }

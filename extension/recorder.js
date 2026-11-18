@@ -127,40 +127,59 @@ function stop() {
   if (rec && rec.recorder.state !== 'inactive') rec.recorder.stop(); // 일시정지 상태에서도 저장
 }
 
+// 팝업 등 다른 화면이 같은 녹화 시간을 보여줄 수 있게 일시정지 정보를 함께 남긴다
+const shareState = () => chrome.storage.session.set({ screenRec: { startedAt: rec.startedAt, windowId: myWindowId, pausedMs: rec.pausedMs, pausedAt: rec.pausedAt } });
+
 function togglePause() {
   if (!rec) return;
   if (rec.recorder.state === 'recording') {
     rec.recorder.pause(); rec.pausedAt = Date.now();
     $('#pause').textContent = '이어서 녹화';
+    shareState();
   } else if (rec.recorder.state === 'paused') {
     rec.recorder.resume(); rec.pausedMs += Date.now() - rec.pausedAt; rec.pausedAt = 0;
     $('#pause').textContent = '일시정지';
+    shareState();
   }
 }
 
 // 웹캠을 항상 위에 뜨는 작은 창(PIP)으로 띄운다. 모니터 전체를 녹화하면 화면에 보이는 그대로 함께 찍힌다.
-let camStream = null;
+let camStream = null, camBusy = false;
+const stopCam = () => { camStream?.getTracks().forEach(t => t.stop()); camStream = null; $('#camv').srcObject = null; $('#cam').textContent = '웹캠 창 띄우기'; };
 async function toggleCam() {
+  if (camBusy) return; // 연달아 눌러도 카메라를 한 번만 켠다
+  camBusy = true;
   const v = $('#camv');
-  if (document.pictureInPictureElement) { await document.exitPictureInPicture().catch(() => {}); return; }
   try {
-    camStream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 640 }, height: { ideal: 480 } } });
-    v.srcObject = camStream;
-    await v.play();
-    await v.requestPictureInPicture();
-    $('#cam').textContent = '웹캠 창 닫기';
-    say('');
-  } catch (e) {
-    camStream?.getTracks().forEach(t => t.stop()); camStream = null;
-    say(e.name === 'NotAllowedError' ? '웹캠 사용이 허용되지 않았습니다. 주소창 왼쪽의 권한 설정을 확인해 주세요.'
-      : e.name === 'NotFoundError' ? '연결된 웹캠을 찾지 못했습니다.' : `웹캠 창을 띄우지 못했습니다: ${e.message}`);
+    if (document.pictureInPictureElement) { await document.exitPictureInPicture().catch(() => {}); return; }
+    // 1) 카메라 켜기 (이미 켜 둔 것이 있으면 그대로 쓴다)
+    if (!camStream) {
+      try {
+        camStream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 640 }, height: { ideal: 480 } } });
+      } catch (e) {
+        say(e.name === 'NotAllowedError' ? '웹캠 사용이 허용되지 않았습니다. 주소창 왼쪽의 권한 설정을 확인해 주세요.'
+          : e.name === 'NotFoundError' ? '연결된 웹캠을 찾지 못했습니다.' : `웹캠을 켜지 못했습니다: ${e.message}`);
+        return;
+      }
+      v.srcObject = camStream;
+      await v.play().catch(() => {});
+    }
+    // 2) 작은 창으로 띄우기. 권한 창에서 시간이 걸리면 브라우저가 "방금 누른 것"으로 쳐 주지 않아 거절할 수 있다.
+    //    그때는 카메라를 켜 둔 채로 한 번 더 누르게 한다.
+    try {
+      await v.requestPictureInPicture();
+      $('#cam').textContent = '웹캠 창 닫기';
+      say('');
+    } catch (e) {
+      $('#cam').textContent = '웹캠 창 띄우기 (한 번 더)';
+      say('웹캠은 준비됐습니다. 버튼을 한 번 더 누르면 창이 뜹니다.');
+    }
+  } finally {
+    camBusy = false;
   }
 }
-$('#camv').addEventListener('leavepictureinpicture', () => {
-  camStream?.getTracks().forEach(t => t.stop()); camStream = null;
-  $('#camv').srcObject = null;
-  $('#cam').textContent = '웹캠 창 띄우기';
-});
+$('#camv').addEventListener('leavepictureinpicture', stopCam);
+addEventListener('pagehide', stopCam);
 
 function cleanup() {
   if (!rec) return;
