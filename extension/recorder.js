@@ -4,7 +4,7 @@
 
 const $ = s => document.querySelector(s);
 const say = t => { $('#msg').textContent = t || ''; };
-const show = id => ['idle', 'recording', 'done'].forEach(s => { $(`#${s}`).hidden = s !== id; });
+const show = id => ['idle', 'counting', 'recording', 'done'].forEach(s => { $(`#${s}`).hidden = s !== id; });
 const fmtTime = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 const pad = n => String(n).padStart(2, '0');
 
@@ -49,10 +49,11 @@ async function start() {
     const w = await chrome.windows.get(myWindowId).catch(() => null);
     if (w && (w.state !== 'normal' || w.width < BIG.width || w.height < BIG.height)) { resize(BIG); await new Promise(r => setTimeout(r, 200)); }
   }
+  const q = qualityOf(await getNaming());
   let display, mic;
   try {
     display = await navigator.mediaDevices.getDisplayMedia({
-      video: { frameRate: { ideal: 30, max: 30 }, width: { max: 1920 }, height: { max: 1080 } },
+      video: { frameRate: { ideal: 30, max: 30 }, width: { max: q.w }, height: { max: q.h } },
       audio: true,
       systemAudio: 'include',
       selfBrowserSurface: 'exclude', // 이 녹화 창 자체는 목록에서 제외
@@ -72,10 +73,23 @@ async function start() {
   }
 
   const [video] = display.getVideoTracks();
+  // 3초 카운트다운 (그 사이 공유를 끊으면 취소)
+  if ($('#countdown').checked) {
+    show('counting');
+    for (let n = 3; n > 0 && video.readyState === 'live'; n--) {
+      $('#count').textContent = n;
+      await new Promise(r => setTimeout(r, 1000));
+    }
+    if (video.readyState !== 'live') {
+      [display, mic].forEach(s => s?.getTracks().forEach(t => t.stop()));
+      show('idle');
+      return;
+    }
+  }
   const { tracks: audio, audioCtx } = mixAudio([...display.getAudioTracks(), ...(mic?.getAudioTracks() || [])]);
   const stream = new MediaStream([video, ...audio]);
   const mimeType = MIME_CANDIDATES.find(t => MediaRecorder.isTypeSupported(t)) || '';
-  const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 8_000_000 });
+  const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: q.bits });
   const chunks = [];
   const name = fileName();
   recorder.ondataavailable = e => e.data.size && chunks.push(e.data);
@@ -87,10 +101,13 @@ async function start() {
   recorder.start(1000);
 
   const startedAt = Date.now();
+  // 일시정지한 시간은 녹화 시간에서 뺀다
+  const elapsed = () => (Date.now() - startedAt - rec.pausedMs - (rec.pausedAt ? Date.now() - rec.pausedAt : 0)) / 1000;
   rec = {
-    recorder, audioCtx, startedAt, streams: [display, mic].filter(Boolean),
-    timer: setInterval(() => { $('#timer').textContent = `● ${fmtTime((Date.now() - startedAt) / 1000)}`; }, 500),
+    recorder, audioCtx, startedAt, pausedMs: 0, pausedAt: 0, streams: [display, mic].filter(Boolean),
+    timer: setInterval(() => { $('#timer').textContent = `${rec.pausedAt ? '❚❚' : '●'} ${fmtTime(elapsed())}`; }, 500),
   };
+  $('#pause').textContent = '일시정지';
   $('#timer').textContent = '● 0:00';
   $('#what').textContent = surfaceLabel(video);
   show('recording');
@@ -107,8 +124,43 @@ async function start() {
 }
 
 function stop() {
-  if (rec?.recorder.state === 'recording') rec.recorder.stop();
+  if (rec && rec.recorder.state !== 'inactive') rec.recorder.stop(); // 일시정지 상태에서도 저장
 }
+
+function togglePause() {
+  if (!rec) return;
+  if (rec.recorder.state === 'recording') {
+    rec.recorder.pause(); rec.pausedAt = Date.now();
+    $('#pause').textContent = '이어서 녹화';
+  } else if (rec.recorder.state === 'paused') {
+    rec.recorder.resume(); rec.pausedMs += Date.now() - rec.pausedAt; rec.pausedAt = 0;
+    $('#pause').textContent = '일시정지';
+  }
+}
+
+// 웹캠을 항상 위에 뜨는 작은 창(PIP)으로 띄운다. 모니터 전체를 녹화하면 화면에 보이는 그대로 함께 찍힌다.
+let camStream = null;
+async function toggleCam() {
+  const v = $('#camv');
+  if (document.pictureInPictureElement) { await document.exitPictureInPicture().catch(() => {}); return; }
+  try {
+    camStream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 640 }, height: { ideal: 480 } } });
+    v.srcObject = camStream;
+    await v.play();
+    await v.requestPictureInPicture();
+    $('#cam').textContent = '웹캠 창 닫기';
+    say('');
+  } catch (e) {
+    camStream?.getTracks().forEach(t => t.stop()); camStream = null;
+    say(e.name === 'NotAllowedError' ? '웹캠 사용이 허용되지 않았습니다. 주소창 왼쪽의 권한 설정을 확인해 주세요.'
+      : e.name === 'NotFoundError' ? '연결된 웹캠을 찾지 못했습니다.' : `웹캠 창을 띄우지 못했습니다: ${e.message}`);
+  }
+}
+$('#camv').addEventListener('leavepictureinpicture', () => {
+  camStream?.getTracks().forEach(t => t.stop()); camStream = null;
+  $('#camv').srcObject = null;
+  $('#cam').textContent = '웹캠 창 띄우기';
+});
 
 function cleanup() {
   if (!rec) return;
@@ -185,5 +237,7 @@ addEventListener('beforeunload', e => { if (rec || saving) e.preventDefault(); }
 
 $('#start').onclick = start;
 $('#stop').onclick = stop;
+$('#pause').onclick = togglePause;
+$('#cam').onclick = toggleCam;
 $('#again').onclick = () => { resize(BIG); show('idle'); say(''); };
 $('#close').onclick = () => window.close();

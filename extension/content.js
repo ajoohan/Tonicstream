@@ -123,6 +123,13 @@ if (!(() => { try { return typeof window.__tonicstream === 'function' && window.
   // 페이지를 떠나면 녹화도 끝나므로 툴바 아이콘 상태를 되돌린다
   addEventListener('pagehide', () => { if (recs.size) tell({ type: 'videorec-state', recording: false }); });
 
+  // 저장 설정(화질, 저장 버튼 표시)을 읽어 두고 바뀌면 따라간다. 값의 뜻은 naming.js 참고.
+  const BITS = { high: 8_000_000, medium: 4_000_000, small: 1_500_000 };
+  let settings = { quality: 'high', hover: 'ads' };
+  const loadSettings = () => { try { chrome.storage.local.get('naming').then(r => { settings = { ...settings, ...r.naming }; }).catch(() => {}); } catch {} };
+  loadSettings();
+  try { chrome.storage.onChanged.addListener((c, area) => { if (area === 'local' && c.naming) loadSettings(); }); } catch {}
+
   async function startRecording(id, fromStart, title, range) {
     if (recs.has(id) || starting.has(id)) return; // 버튼을 연달아 눌러도 한 번만 시작
     starting.add(id);
@@ -153,7 +160,7 @@ if (!(() => { try { return typeof window.__tonicstream === 'function' && window.
     const mimeType = pickMime();
     let recorder;
     try {
-      recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 8_000_000 });
+      recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: BITS[settings.quality] || BITS.high });
       recorder.start(1000);
     } catch (e) {
       throw new Error(e.name === 'SecurityError'
@@ -247,6 +254,76 @@ if (!(() => { try { return typeof window.__tonicstream === 'function' && window.
     const rec = recs.get(id);
     if (rec && rec.recorder.state !== 'inactive') rec.recorder.stop();
   }
+
+  // ── 영상 위 "저장" 버튼 ──
+  // 광고 라이브러리(Meta · TikTok)처럼 영상이 줄지어 있는 곳에서, 영상에 마우스를 올리면 버튼 하나로 저장한다.
+  // 설정(hover)에 따라: ads = 광고 라이브러리에서만, all = 모든 사이트, off = 표시 안 함.
+  const isAdLibrary = () => {
+    const h = location.hostname, p = location.pathname;
+    return (/(^|\.)facebook\.com$/.test(h) && p.startsWith('/ads/library')) || h === 'library.tiktok.com'
+      || (h === 'ads.tiktok.com' && p.includes('creativecenter'));
+  };
+  const hoverOn = () => settings.hover === 'all' || (settings.hover !== 'off' && isAdLibrary());
+  let hb = null, hbVideo = null, hbBusy = false, hbLast = 0;
+
+  function hoverButton() {
+    if (hb) return hb;
+    const host = document.createElement('div');
+    host.style.cssText = 'all:initial;position:fixed;z-index:2147483646;display:none';
+    const root = host.attachShadow({ mode: 'closed' });
+    root.innerHTML = `<style>
+      button{all:unset;cursor:pointer;display:flex;align-items:center;gap:7px;padding:7px 13px;border-radius:999px;
+        background:rgba(24,24,28,.92);color:#fff;border:1px solid rgba(255,255,255,.18);box-shadow:0 6px 18px rgba(0,0,0,.4);
+        font:700 13px/1.2 "Pretendard Variable",Pretendard,system-ui,"Segoe UI","Malgun Gothic",sans-serif;white-space:nowrap}
+      button:hover{background:#e5484d;border-color:#e5484d}
+      i{width:9px;height:9px;border-radius:50%;background:#ff5a5f;display:inline-block}
+      button:hover i{background:#fff}
+    </style><button><i></i><span>저장</span></button>`;
+    const label = root.querySelector('span');
+    root.querySelector('button').addEventListener('click', async e => {
+      e.preventDefault(); e.stopPropagation();
+      const v = hbVideo;
+      if (!v || hbBusy) return;
+      hbBusy = true;
+      label.textContent = '저장 중…';
+      const done = await saveFromPage(v).catch(err => ({ ok: false, error: err.message }));
+      label.textContent = done.ok ? done.text : `실패: ${done.error || ''}`.slice(0, 40);
+      setTimeout(() => { label.textContent = '저장'; hbBusy = false; }, 2200);
+    });
+    (document.body || document.documentElement).appendChild(host);
+    return (hb = host);
+  }
+
+  // 원본 파일을 바로 받을 수 있으면 받고, 아니면 처음부터 끝까지 녹화한다
+  async function saveFromPage(v) {
+    const src = /^https?:/.test(v.currentSrc) ? v.currentSrc : '';
+    const cross = src && new URL(src).origin !== location.origin && !v.crossOrigin;
+    if (src && (cross || /\.(mp4|webm|mov)(\?|$)/i.test(src))) {
+      const res = await tell({ type: 'save-video-url', url: src, title: document.title, thumb: thumbOf(v) });
+      if (res?.ok) return { ok: true, text: '저장했습니다' };
+      if (cross) return { ok: false, error: res?.error || '받기 실패' };
+    }
+    await startRecording(idOf(v), Number.isFinite(v.duration), document.title);
+    return { ok: true, text: '녹화 시작' };
+  }
+
+  addEventListener('mousemove', e => {
+    if (e.timeStamp - hbLast < 150) return;
+    hbLast = e.timeStamp;
+    if (!hoverOn()) { if (hb) hb.style.display = 'none'; return; }
+    // 영상이 다른 요소에 덮여 있는 사이트가 많아, 마우스 아래에 겹쳐 있는 것들 중에서 영상을 찾는다
+    const v = document.elementsFromPoint(e.clientX, e.clientY).find(x => x.tagName === 'VIDEO');
+    if (!v || v.getBoundingClientRect().width < 160 || !(v.readyState > 0 || v.currentSrc)) {
+      if (hb && !hbBusy && !(e.target === hb)) hb.style.display = 'none';
+      return;
+    }
+    const r = v.getBoundingClientRect(), b = hoverButton();
+    hbVideo = v;
+    b.style.display = 'block';
+    b.style.top = `${Math.max(8, r.top + 10)}px`;
+    b.style.left = `${Math.max(8, Math.min(innerWidth - 110, r.right - 100))}px`;
+  }, { passive: true, capture: true });
+  addEventListener('scroll', () => { if (hb && !hbBusy) hb.style.display = 'none'; }, { passive: true, capture: true });
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg.type === 'list') { sendResponse({ videos: list(), title: document.title }); return; }

@@ -22,18 +22,18 @@ const MIME_CANDIDATES = [
   'video/webm',
 ];
 
-async function startTabRec(streamId, filename) {
+async function startTabRec(streamId, filename, q = { bits: 8_000_000, w: 1920, h: 1080 }) {
   const src = { chromeMediaSource: 'tab', chromeMediaSourceId: streamId };
   const stream = await navigator.mediaDevices.getUserMedia({
     audio: { mandatory: src },
-    video: { mandatory: { ...src, maxWidth: 1920, maxHeight: 1080, maxFrameRate: 30 } },
+    video: { mandatory: { ...src, maxWidth: q.w, maxHeight: q.h, maxFrameRate: 30 } },
   });
   // 탭 녹화 중에는 탭 소리가 꺼지므로, 사용자가 계속 들을 수 있게 다시 재생
   const audioCtx = new AudioContext();
   audioCtx.createMediaStreamSource(stream).connect(audioCtx.destination);
 
   const mimeType = MIME_CANDIDATES.find(t => MediaRecorder.isTypeSupported(t)) || '';
-  const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 8_000_000 });
+  const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: q.bits });
   const chunks = [];
   recorder.ondataavailable = e => e.data.size && chunks.push(e.data);
   recorder.onstop = () => {
@@ -57,7 +57,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (_sender.tab) return;
   if (msg.type === 'offscreen-tabrec-start') {
     if (tabRec) { sendResponse({ ok: false, error: '이미 녹화 중입니다.' }); return; }
-    startTabRec(msg.streamId, msg.filename)
+    startTabRec(msg.streamId, msg.filename, msg.quality)
       .then(() => sendResponse({ ok: true }))
       .catch(e => sendResponse({ ok: false, error: e.message }));
     return true;

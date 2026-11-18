@@ -220,10 +220,18 @@ async function render() {
 async function initNaming() {
   const naming = await getNaming();
   const folder = $('#nm-folder'), pattern = $('#nm-pattern'), lib = $('#nm-library');
+  const quality = $('#nm-quality'), board = $('#nm-board'), hover = $('#nm-hover');
   folder.value = naming.folder; pattern.value = naming.pattern; lib.checked = naming.library;
-  lib.onchange = () => update(true);
+  quality.value = naming.quality; board.value = naming.board; hover.value = naming.hover;
+  // 이미 쓰고 있는 보드 이름을 고를 수 있게 제안
+  chrome.storage.local.get('library').then(({ library = [] }) => {
+    $('#nm-boards').replaceChildren(...[...new Set(library.map(x => x.board).filter(Boolean))].map(b => el('option', { value: b })));
+  });
+  lib.onchange = quality.onchange = hover.onchange = () => update(true);
+  board.oninput = () => update(true);
   const update = async save => {
-    const n = { folder: safeFolder(folder.value), pattern: pattern.value, library: lib.checked };
+    const n = { folder: safeFolder(folder.value), pattern: pattern.value, library: lib.checked,
+      quality: quality.value, board: board.value.trim().slice(0, 40), hover: hover.value };
     if (save) await chrome.storage.local.set({ naming: n });
     if (save === 'tidy') folder.value = n.folder; // 입력을 마쳤을 때만 칸의 글자를 정리
     $('#nm-preview').textContent = `예) 다운로드/${formatName(n, tab?.title || '영상 제목', tab?.url || 'https://www.youtube.com/', 'mp4')}`;

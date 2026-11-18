@@ -16,12 +16,24 @@
         <p class="meta" id="count"></p>
       </div>
       <div class="tools">
-        <input id="q" type="text" placeholder="제목 · 사이트 · 태그 · 메모 검색" spellcheck="false">
-        <button id="csv">CSV 내보내기</button>
+        <input id="q" type="text" placeholder="제목 · 사이트 · 보드 · 태그 · 메모 검색" spellcheck="false">
+        <button id="html" title="지금 보이는 기록을 한 장짜리 HTML 파일로 저장 (팀 전달용)">HTML 내보내기</button>
+        <button id="csv" title="지금 보이는 기록을 엑셀용 CSV로 저장">CSV 내보내기</button>
         <button id="clear">전체 삭제</button>
       </div>
     </header>
     <p class="meta note">저장한 영상의 제목·원본 주소·날짜·미리보기를 이 브라우저에만 기록합니다. 영상 파일은 다운로드 폴더에 있고, 여기서 기록을 지워도 파일은 지워지지 않습니다.</p>
+    <div class="filters">
+      <div id="boardbar"></div>
+      <div class="selects">
+        <select id="f-kind" aria-label="저장 방법"></select>
+        <select id="f-rating" aria-label="별점">
+          <option value="0">모든 별점</option><option value="1">★ 1점 이상</option><option value="3">★ 3점 이상</option><option value="4">★ 4점 이상</option><option value="5">★ 5점</option>
+        </select>
+        <select id="f-sort" aria-label="정렬"><option value="new">최신순</option><option value="rating">별점순</option></select>
+      </div>
+    </div>
+    <datalist id="boards"></datalist>
     <p id="msg"></p>
     <div id="list"></div>
   </main>

@@ -7,7 +7,7 @@
 - 업로드 파일: https://stream.plustonic.com/tonicstream-extension.zip
   - `extension/` 폴더를 압축한 파일로, 배포할 때마다 자동으로 새로 만들어집니다.
   - `manifest.json`이 압축 파일 맨 위에 있어서 그대로 올리면 됩니다.
-- 버전: 0.7.5
+- 버전: 0.8.0
 
 ## 2. 속성 (Properties)
 
@@ -40,7 +40,9 @@ Tonicstream은 브라우저에서 재생 중인 영상을 MP4 파일로 저장�
 • 장면 캡처: 지금 보이는 영상 장면을 PNG 이미지로 저장합니다.
 • 저장 설정: 저장 폴더와 파일 이름 규칙(날짜_사이트_제목 등)을 정할 수 있습니다.
 • 구간 녹화: 시작·끝 시간을 정해 필요한 부분만 저장합니다.
-• 레퍼런스 보관함: 저장한 영상의 제목·원본 주소·날짜·미리보기를 모아 보고, 메모와 태그를 달고, CSV로 내보냅니다. 기록은 내 브라우저에만 저장됩니다.
+• 레퍼런스 보관함: 저장한 영상을 보드로 묶고 별점·메모·태그를 달아 정리합니다. HTML 한 장이나 CSV로 내보내 팀에 공유할 수 있습니다. 기록은 내 브라우저에만 저장됩니다.
+• 영상 위 저장 버튼: Meta·TikTok 광고 라이브러리에서 영상에 마우스를 올리면 버튼 하나로 저장합니다.
+• 녹화 화질 선택, 화면 녹화의 3초 카운트다운·일시정지·웹캠 창을 지원합니다.
 
 ■ 이렇게 사용하세요
 1. 영상이 있는 페이지에서 툴바의 Tonicstream 아이콘을 누릅니다. (단축키 Alt+Shift+V)
@@ -76,7 +78,9 @@ Tonicstream saves the video you are watching in your browser as an MP4 file.
 • Frame capture: save the current video frame as a PNG image.
 • Save settings: choose a subfolder and a file naming rule (e.g. date_site_title).
 • Range recording: set a start and end time to save only that part.
-• Reference library: a local list of what you saved (title, source URL, date, thumbnail) with notes, tags and CSV export. Stored only in your browser.
+• Reference library: organise saves into boards with star ratings, notes and tags; export as a single HTML page or CSV. Stored only in your browser.
+• Hover save button: on the Meta and TikTok ad libraries, save a video with one click.
+• Recording quality presets; countdown, pause and a floating webcam window for screen recording.
 
 ■ How to use
 1. On a page with a video, click the Tonicstream icon (shortcut Alt+Shift+V).
@@ -116,6 +120,8 @@ Permission justifications:
 - Screen recording (no extra permission): the user clicks a button in the extension's own recorder window, which calls navigator.mediaDevices.getDisplayMedia so the user picks the screen/window/tab in the browser's picker. The microphone is used only if the user ticks "record microphone". The file is saved locally with downloads.
 - Frame capture: draws the current <video> frame to a canvas and saves a PNG. For cross-origin videos (tainted canvas) it falls back to chrome.tabs.captureVisibleTab and crops to the video; this runs only when the user clicks "장면 캡처".
 - storage (local): the user's save folder and file naming preference, and the reference library (title, source URL, date, small thumbnail, user notes/tags of saved items). Nothing leaves the browser; the user can delete entries or turn logging off.
+- Hover save button: on ad library pages (facebook.com/ads/library, library.tiktok.com, TikTok Creative Center) the content script shows a "저장" button over the hovered <video>; the user can enable it on all sites or turn it off in settings. Clicking it downloads the video file or starts recording that element.
+- Camera (no manifest permission; browser prompt): only when the user clicks "웹캠 창 띄우기" in the recorder window. The camera stream is shown in a Picture-in-Picture window on the user's own screen and is not stored or sent.
 - scripting + activeTab: inject the content script into frames that loaded before installation when the user opens the popup.
 - storage: keep the list of detected files per tab for the current session (chrome.storage.session).
 
