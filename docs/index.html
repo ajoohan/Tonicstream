@@ -108,16 +108,23 @@ footer a { text-decoration: none; display: inline-flex; align-items: center; min
     <h1>보고 있는 영상,<br><em>MP4</em>로 저장.</h1>
     <p class="lead">쇼츠 · 릴스 · 틱톡부터 화면 녹화까지, 클릭 한 번이면 끝.</p>
     <a class="btn" href="tonicstream-extension.zip" download>무료 다운로드</a>
-    <p class="meta">Edge · Chrome 확장 프로그램 · v0.7.3</p>
+    <p class="meta">Edge · Chrome 확장 프로그램 · v0.7.4</p>
   </section>
 
   <section class="wrap">
     <figure class="reel">
-      <video id="reel" autoplay muted loop playsinline preload="metadata" poster="assets/promo-poster.jpg"
-        aria-label="Tonicstream 기능 소개 영상: 영상 녹화, 구간 녹화, 장면 캡처, 화면 녹화, 레퍼런스 보관함">
-        <source src="assets/promo-mobile.mp4" type="video/mp4" media="(max-width: 720px)">
-        <source src="assets/promo.mp4" type="video/mp4">
-      </video>
+<video id="reel" autoplay muted loop playsinline preload="metadata"
+        aria-label="Tonicstream 기능 소개 영상: 영상 녹화, 구간 녹화, 장면 캡처, 화면 녹화, 레퍼런스 보관함"></video>
+      <script>
+        // 휴대폰 폭이면 세로(4:5) 영상, 아니면 가로(16:9) 영상을 고른다.
+        // (<source media>를 무시하는 브라우저가 있어 여기서 직접 정한다)
+        (function () {
+          var v = document.getElementById('reel'), m = matchMedia('(max-width: 720px)').matches;
+          v.poster = m ? 'assets/promo-mobile-poster.jpg' : 'assets/promo-poster.jpg';
+          v.src = m ? 'assets/promo-mobile.mp4' : 'assets/promo.mp4';
+        })();
+      </script>
+      <noscript><img src="assets/promo-poster.jpg" alt="Tonicstream 기능 소개" style="width:100%;border-radius:18px"></noscript>
       <button id="reel-toggle" type="button" aria-label="영상 일시정지" aria-pressed="false">❚❚</button>
     </figure>
   </section>
@@ -156,8 +163,6 @@ footer a { text-decoration: none; display: inline-flex; align-items: center; min
   (function () {
     var v = document.getElementById('reel'), btn = document.getElementById('reel-toggle');
     if (!v) return;
-    // 휴대폰 폭에서는 세로(4:5) 영상을 쓰므로 첫 화면 그림도 세로용으로 바꾼다
-    if (matchMedia('(max-width: 720px)').matches) v.poster = 'assets/promo-mobile-poster.jpg';
     // "동작 줄이기"를 켠 사용자에게는 자동으로 틀지 않는다
     if (matchMedia('(prefers-reduced-motion: reduce)').matches) { v.removeAttribute('autoplay'); v.pause(); }
     // 일시정지·재생 버튼 (반복 영상을 멈출 수 있게)
