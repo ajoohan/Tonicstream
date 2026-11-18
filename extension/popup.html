@@ -38,7 +38,7 @@
   </section>
 
   <details id="naming">
-    <summary>저장 설정 <small>폴더 · 파일 이름</small></summary>
+    <summary>저장 설정 <small>폴더 · 파일 이름 · 화질 · 보드</small></summary>
     <div class="card">
       <label>저장 폴더 <input id="nm-folder" type="text" placeholder="비워 두면 다운로드 폴더에 바로 저장" spellcheck="false"></label>
       <label>파일 이름
@@ -49,6 +49,21 @@
         </select>
       </label>
       <div class="meta" id="nm-preview"></div>
+      <label>녹화 화질
+        <select id="nm-quality">
+          <option value="high">고화질 (용량 큼)</option>
+          <option value="medium">보통 (용량 절반)</option>
+          <option value="small">작게 (메신저 공유용)</option>
+        </select>
+      </label>
+      <label>보관함 보드 <input id="nm-board" type="text" list="nm-boards" placeholder="예) 가을 캠페인 · 비워 두면 미분류" spellcheck="false"><datalist id="nm-boards"></datalist></label>
+      <label>영상 위 저장 버튼
+        <select id="nm-hover">
+          <option value="ads">광고 라이브러리에서만 (Meta · TikTok)</option>
+          <option value="all">모든 사이트에서</option>
+          <option value="off">표시 안 함</option>
+        </select>
+      </label>
       <label class="check"><input id="nm-library" type="checkbox"> 저장할 때 보관함에 기록 <small>이 브라우저에만 저장됩니다</small></label>
     </div>
   </details>

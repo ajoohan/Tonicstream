@@ -133,6 +133,21 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (_sender.tab?.id >= 0) setVideoRec(_sender.tab.id, _sender.frameId, msg.recording);
     return;
   }
+  if (msg.type === 'save-video-url') {
+    // 페이지의 "저장" 버튼(content.js)이 보낸 원본 영상 주소 저장. 영상 파일 형식만 허용한다.
+    const m = /^https?:/.test(msg.url || '') && new URL(msg.url).pathname.match(/\.(mp4|webm|mov)$/i);
+    const ext = m ? m[1].toLowerCase() : 'mp4';
+    if (!_sender.tab || !/^https?:/.test(msg.url || '')) { sendResponse({ ok: false, error: '잘못된 요청입니다.' }); return; }
+    buildName(msg.title, _sender.tab.url, ext)
+      .then(async filename => {
+        const id = await download(msg.url, filename);
+        logSave({ kind: '원본 다운로드', title: msg.title, pageUrl: _sender.tab.url, filename, downloadId: id, thumb: msg.thumb, incognito: _sender.tab.incognito });
+        return id;
+      })
+      .then(id => sendResponse({ ok: true, id }))
+      .catch(e => sendResponse({ ok: false, error: e.message }));
+    return true;
+  }
   if (msg.type === 'save-blob') {
     buildName(msg.title, _sender.tab?.url || _sender.url, msg.ext, { suffix: msg.suffix })
       .then(async filename => {
@@ -230,7 +245,7 @@ async function startTabRecording(tabId, streamId, title, pageUrl) {
   try {
     tab = await chrome.tabs.get(tabId).catch(() => null);
     await ensureOffscreen();
-    const res = await chrome.runtime.sendMessage({ type: 'offscreen-tabrec-start', streamId, filename });
+    const res = await chrome.runtime.sendMessage({ type: 'offscreen-tabrec-start', streamId, filename, quality: qualityOf(await getNaming()) });
     if (!res?.ok) throw new Error(res?.error || '탭 녹화를 시작하지 못했습니다.');
     rec = { tabId, startedAt: Date.now(), title, pageUrl, thumb: '', incognito: !!tab?.incognito };
     await chrome.storage.session.set({ tabRec: rec });
@@ -456,7 +471,8 @@ let libraryQueue = Promise.resolve();
 function logSave(entry) {
   if (entry.incognito) return libraryQueue; // 시크릿 창에서 저장한 것은 기록하지 않는다
   libraryQueue = libraryQueue.then(async () => {
-    if (!(await getNaming()).library) return;
+    const naming = await getNaming();
+    if (!naming.library) return;
     const { library = [] } = await chrome.storage.local.get('library');
     const [d] = entry.downloadId != null ? await chrome.downloads.search({ id: entry.downloadId }) : [];
     library.unshift({
@@ -465,6 +481,7 @@ function logSave(entry) {
       filename: finalName(entry.filename || '', d?.filename), downloadId: entry.downloadId ?? null,
       // 미리보기는 보통 2~10KB. 저장 공간(브라우저 한도 약 10MB)을 넘지 않게 큰 것은 버린다
       thumb: (entry.thumb || '').length <= THUMB_MAX ? entry.thumb || '' : '', memo: '', tags: '',
+      board: String(naming.board || '').slice(0, 40), rating: 0,
     });
     library.length = Math.min(library.length, LIBRARY_MAX);
     await saveLibrary(library);
@@ -514,7 +531,10 @@ function updateLibrary(id, change) {
   libraryQueue = libraryQueue.then(async () => {
     const { library = [] } = await chrome.storage.local.get('library');
     const next = id == null ? [] : change === null ? library.filter(x => x.id !== id)
-      : library.map(x => x.id === id ? { ...x, memo: String(change.memo ?? x.memo).slice(0, 500), tags: String(change.tags ?? x.tags).slice(0, 200) } : x);
+      : library.map(x => x.id === id ? { ...x,
+        memo: String(change.memo ?? x.memo).slice(0, 500), tags: String(change.tags ?? x.tags).slice(0, 200),
+        board: String(change.board ?? x.board ?? '').trim().slice(0, 40),
+        rating: Math.max(0, Math.min(5, Math.round(Number(change.rating ?? x.rating ?? 0)) || 0)) } : x);
     await chrome.storage.local.set({ library: next });
   }).catch(e => console.warn('보관함 수정 실패', e));
   return libraryQueue;

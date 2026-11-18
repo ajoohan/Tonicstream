@@ -1,6 +1,16 @@
 // 저장 파일 이름·폴더 규칙. 배경(background), 팝업, 화면 녹화 창이 함께 쓴다.
 // 설정은 이 브라우저에만 저장된다(chrome.storage.local).
-const NAMING_DEFAULTS = { folder: '', pattern: 'title', library: true }; // pattern: title | date_title | date_site_title
+// quality: high | medium | small (녹화 화질)   board: 새로 저장할 때 넣을 보관함 보드 이름
+// hover: ads | all | off (영상 위에 저장 버튼을 띄울 곳. ads = 광고 라이브러리 사이트만)
+const NAMING_DEFAULTS = { folder: '', pattern: 'title', library: true, quality: 'high', board: '', hover: 'ads' };
+
+// 녹화 화질: 초당 비트 수와(탭·화면 녹화의) 최대 크기
+const QUALITY = {
+  high: { bits: 8_000_000, w: 1920, h: 1080 },
+  medium: { bits: 4_000_000, w: 1920, h: 1080 },
+  small: { bits: 1_500_000, w: 1280, h: 720 },
+};
+const qualityOf = naming => QUALITY[naming?.quality] || QUALITY.high; // pattern: title | date_title | date_site_title
 
 // 파일·폴더 이름에 쓸 수 없는 글자를 걸러낸다.
 // - \ / : * ? " < > | ~ 와 제어 문자
