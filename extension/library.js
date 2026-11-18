@@ -42,6 +42,7 @@ function card(it) {
     el('div', { className: 'body' },
       el('div', { className: 'title', textContent: it.title || it.filename, title: it.filename }),
       el('div', { className: 'sub' }, el('span', { className: 'kind', textContent: it.kind }), `${fmtDate(it.ts)}${it.site ? ' · ' + it.site : ''}`),
+      el('div', { className: 'file', textContent: it.filename, title: '저장된 파일 이름' }),
       tags, memo, acts));
 }
 

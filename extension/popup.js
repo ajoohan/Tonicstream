@@ -159,8 +159,9 @@ async function openRecorder() {
   // 시크릿 창에서 시작한 화면 녹화는 보관함에 남기지 않도록 알려 둔다
   await chrome.storage.session.set({ screenRecIncognito: !!tab?.incognito });
   const [existing] = await chrome.runtime.getContexts({ contextTypes: ['TAB'], documentUrls: [RECORDER_URL] });
+  // 브라우저의 화면 선택 창이 이 창 안에 그려지므로, 잘리지 않게 넉넉한 크기로 연다 (녹화가 시작되면 스스로 작아진다)
   if (existing) await chrome.windows.update(existing.windowId, { state: 'normal', focused: true });
-  else await chrome.windows.create({ url: RECORDER_URL, type: 'popup', width: 400, height: 380, focused: true });
+  else await chrome.windows.create({ url: RECORDER_URL, type: 'popup', width: 720, height: 800, focused: true });
   window.close();
 }
 
@@ -181,6 +182,22 @@ async function renderScreenRec() {
   }
 }
 
+// 릴스·쇼츠 같은 피드는 다음 영상들을 미리 불러 두기 때문에 영상이 여러 개 잡힌다.
+// 지금 화면에서 재생 중인 영상(과 녹화 중인 영상)만 먼저 보여주고, 나머지는 접어 둔다.
+let showOthers = false;
+function videoList(videos) {
+  if (!videos.length) return [el('p', { className: 'empty', textContent: '재생 중인 영상이 없습니다. 영상을 재생하거나 아래 "탭 녹화"를 이용하세요.' })];
+  const main = videos.filter(v => v.recording || v.active);
+  if (!main.length || main.length === videos.length) return videos.map(videoCard);
+  const others = videos.filter(v => !(v.recording || v.active));
+  const box = el('details', { className: 'others', open: showOthers },
+    el('summary', { textContent: `다른 영상 ${others.length}개 ` }, el('small', { textContent: '화면에 보이지 않거나 멈춰 있는 영상' })),
+    ...others.map((v, i) => videoCard(v, i + main.length)));
+  // 펼친 상태를 기억해 두어야 1초마다 다시 그릴 때 도로 접히지 않는다
+  box.querySelector('summary').addEventListener('click', () => { showOthers = !box.open; });
+  return [...main.map(videoCard), box];
+}
+
 async function render() {
   renderScreenRec();
   const [videos, files, rec] = await Promise.all([
@@ -189,8 +206,7 @@ async function render() {
     chrome.runtime.sendMessage({ type: 'tabrec-status' }),
   ]);
   renderTabRec(rec);
-  $('#videos').replaceChildren(...(videos.length ? videos.map(videoCard)
-    : [el('p', { className: 'empty', textContent: '재생 중인 영상이 없습니다. 영상을 재생하거나 아래 "탭 녹화"를 이용하세요.' })]));
+  $('#videos').replaceChildren(...videoList(videos));
   // 뒤로 가기 등으로 다른 페이지의 파일이 남아 있으면 지금 페이지 것만 보여준다
   const mine = (files || []).filter(f => !f.documentId || !docIds.size || docIds.has(f.documentId));
   $('#files').replaceChildren(...(mine.length ? mine.map(fileCard)

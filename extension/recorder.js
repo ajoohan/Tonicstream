@@ -19,7 +19,10 @@ const MIME_CANDIDATES = [
 
 let rec = null; // { recorder, streams, audioCtx, startedAt, timer }
 let myWindowId;
-chrome.windows.getCurrent().then(w => { myWindowId = w.id; });
+// 화면 선택 창은 이 창 안에 그려진다. 고를 때는 크게, 녹화 중·저장 후에는 작게 둔다.
+const BIG = { width: 720, height: 800 }, SMALL = { width: 420, height: 340 };
+const resize = size => { if (myWindowId != null) chrome.windows.update(myWindowId, { state: 'normal', ...size }).catch(() => {}); };
+chrome.windows.getCurrent().then(w => { myWindowId = w.id; if (w.width < BIG.width || w.height < BIG.height) resize(BIG); });
 
 function fileName(d = new Date()) {
   return `화면 녹화 ${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getSeconds())}`;
@@ -93,6 +96,8 @@ async function start() {
   // 녹화 화면에 이 창이 가리지 않도록 내려 둔다
   if (video.getSettings().displaySurface === 'monitor' && myWindowId != null) {
     chrome.windows.update(myWindowId, { state: 'minimized' }).catch(() => {});
+  } else {
+    resize(SMALL);
   }
 }
 
@@ -129,7 +134,7 @@ async function grabThumb(stream) {
 
 async function finish(chunks, type, name, thumbP) {
   cleanup();
-  if (myWindowId != null) chrome.windows.update(myWindowId, { state: 'normal', focused: true }).catch(() => {});
+  if (myWindowId != null) chrome.windows.update(myWindowId, { state: 'normal', focused: true, ...SMALL }).catch(() => {});
   if (!chunks.length) { show('idle'); say('녹화된 내용이 없습니다.'); return; }
   const ext = type.includes('mp4') ? 'mp4' : 'webm';
   const url = URL.createObjectURL(new Blob(chunks, { type }));
@@ -175,5 +180,5 @@ addEventListener('beforeunload', e => { if (rec || saving) e.preventDefault(); }
 
 $('#start').onclick = start;
 $('#stop').onclick = stop;
-$('#again').onclick = () => { show('idle'); say(''); };
+$('#again').onclick = () => { resize(BIG); show('idle'); say(''); };
 $('#close').onclick = () => window.close();
