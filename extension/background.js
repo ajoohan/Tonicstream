@@ -18,7 +18,8 @@ chrome.declarativeNetRequest.updateSessionRules({
       type: 'modifyHeaders',
       requestHeaders: [{ header: 'referer', operation: 'set', value: 'https://www.tiktok.com/' }],
     },
-    condition: { requestDomains: TIKTOK_CDN, tabIds: [-1], resourceTypes: ['xmlhttprequest', 'other'] },
+    // initiatorDomains: 이 확장이 보낸 요청에만 적용 (틱톡 사이트 자체의 백그라운드 요청은 건드리지 않음)
+    condition: { requestDomains: TIKTOK_CDN, initiatorDomains: [chrome.runtime.id], tabIds: [-1], resourceTypes: ['xmlhttprequest', 'other'] },
   }],
 }).catch(e => console.warn('TikTok 규칙 등록 실패', e));
 let mediaP; // { [tabId]: [{url, type, size, ts}] }
@@ -109,7 +110,9 @@ chrome.webRequest.onHeadersReceived.addListener(
     if (/attachment/i.test(header(d.responseHeaders, 'content-disposition'))) return;
     // zip·실행 파일처럼 화면에 열리지 않고 다운로드되는 형식도 페이지를 바꾸지 않는다
     const type = header(d.responseHeaders, 'content-type').split(';')[0].trim().toLowerCase();
-    if (type && !/^(text|image|video|audio)\/|^application\/(xhtml\+xml|xml|pdf|json)$/.test(type)) return;
+    const opensInTab = /^(text|image|video|audio)\/|^application\/(xhtml\+xml|xml|pdf|json|javascript)$|\+(xml|json)$/.test(type)
+      && !/^text\/(csv|calendar|x-vcard|vcard|tab-separated-values)$|^image\/tiff$|^video\/x-matroska$|^audio\/x-(ms-wma|aiff)$/.test(type);
+    if (type && !opensInTab) return;
     clearTab(d.tabId);
   },
   { urls: ['<all_urls>'], types: ['main_frame'] },
@@ -144,6 +147,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (_sender.tab?.id >= 0) setVideoRec(_sender.tab.id, _sender.frameId, msg.recording);
     return;
   }
+  // 프레임 안(끼워 넣은 플레이어 등)에서 보낸 저장 요청은 그 프레임의 제목이 비어 있는 경우가 많아 탭 제목을 쓴다
+  if ((msg.type === 'save-video-url' || msg.type === 'save-blob') && _sender.tab && (_sender.frameId || !String(msg.title || '').trim())) {
+    msg.title = _sender.tab.title || msg.title;
+  }
   if (msg.type === 'save-video-url') {
     // 페이지의 "저장" 버튼(content.js)이 보낸 원본 영상 주소 저장. 영상 파일 형식만 허용한다.
     // 주소가 영상 파일(.mp4 등)이거나, 그 탭에서 실제로 영상으로 받아진 것이 확인된 주소여야 한다.
@@ -158,7 +165,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         let ext = byPath || (seen && EXT_OF[seen.type]);
         // 목록에 없는 주소(오래돼 밀려났거나 리다이렉트된 경우)는 서버에 파일 형식만 물어 확인한다
         if (!ext) {
-          const type = await fetch(msg.url, { method: 'HEAD' }).then(r => r.ok ? (r.headers.get('content-type') || '') : '', () => '');
+          const typeOf = init => fetch(msg.url, { credentials: 'include', ...init })
+            .then(r => { r.body?.cancel().catch(() => {}); return r.ok ? (r.headers.get('content-type') || '') : ''; }, () => '');
+          // HEAD를 막는 서버가 많아, 안 되면 첫 1바이트만 받아 형식을 확인한다
+          const type = (await typeOf({ method: 'HEAD' })) || (await typeOf({ headers: { Range: 'bytes=0-0' } }));
           ext = EXT_OF[type.split(';')[0].trim().toLowerCase()];
         }
         if (!ext) throw new Error('영상 파일로 확인되지 않은 주소입니다.');
@@ -177,6 +187,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     buildName(msg.title, _sender.tab?.url || _sender.url, msg.ext, { suffix: msg.suffix })
       .then(async filename => {
         const id = await safeDownload(msg.url, filename);
+        // 시크릿 창처럼 배경이 페이지의 임시 주소를 읽지 못하는 경우 저장이 곧바로 실패한다.
+        // 그때는 실패로 답해, 페이지가 링크 클릭 방식으로 직접 저장하게 한다.
+        if (await failedEarly(id)) throw new Error('저장을 시작하지 못했습니다.');
         logSave({ kind: msg.kind || '영상 녹화', title: msg.title, pageUrl: _sender.tab?.url || '', filename, downloadId: id, thumb: msg.thumb, incognito: _sender.tab?.incognito });
         return id;
       })
@@ -189,7 +202,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true;
   }
   if (msg.type === 'log-save') { logSave(msg.entry); return; }
-  if (msg.type === 'library-update') { updateLibrary(msg.id, msg.change).then(() => sendResponse({ ok: true })); return true; }
+  if (msg.type === 'library-update') {
+    // 전체 삭제는 clearAll로만. id가 빠진 요청이 전체 삭제로 읽히지 않게 한다.
+    if (!msg.clearAll && typeof msg.id !== 'string') { sendResponse({ ok: false }); return; }
+    updateLibrary(msg.clearAll ? null : msg.id, msg.change).then(() => sendResponse({ ok: true }));
+    return true;
+  }
   if (msg.type === 'getMedia') {
     load().then(media => sendResponse(media[msg.tabId] || []));
     return true;
@@ -223,7 +241,9 @@ async function download(url, filename) {
     const res = await chrome.runtime.sendMessage({ type: 'offscreen-fetch', url });
     if (!res?.ok) throw new Error(res?.error || '받기 실패');
     // 저장이 시작된 뒤(in_progress)에 카운트를 내려야 숨겨진 페이지가 먼저 닫히지 않는다
-    return await safeDownload(res.url, filename);
+    const id = await safeDownload(res.url, filename);
+    offscreenBlobs.set(id, res.url); // 저장이 끝나면 숨겨진 페이지가 잡고 있는 영상 데이터를 놓아 준다
+    return id;
   } finally {
     fetchesInFlight--;
     maybeCloseOffscreen();
@@ -232,7 +252,20 @@ async function download(url, filename) {
 
 // 동시에 두 번 불려도 문서를 한 번만 만들도록 진행 중인 생성 작업을 공유
 let creatingOffscreen = null;
+let closingOffscreen = null;
+// 저장이 시작 직후(약 1초 안)에 실패했는지
+async function failedEarly(id) {
+  for (let i = 0; i < 5; i++) {
+    const [d] = await chrome.downloads.search({ id });
+    if (!d || d.state === 'interrupted') return true;
+    if (d.state === 'complete' || d.bytesReceived > 0) return false;
+    await new Promise(r => setTimeout(r, 200));
+  }
+  return false;
+}
+
 async function ensureOffscreen() {
+  await closingOffscreen; // 닫는 중이면 끝난 뒤에 새로 만든다 (닫히는 페이지에 일을 맡기지 않게)
   if (await chrome.offscreen.hasDocument()) return;
   creatingOffscreen ??= chrome.offscreen.createDocument({
     url: 'offscreen.html', reasons: ['BLOBS', 'USER_MEDIA'], justification: '영상 파일 저장 및 탭 녹화',
@@ -250,10 +283,19 @@ async function maybeCloseOffscreen() {
     chrome.downloads.search({ state: 'in_progress' }),
   ]);
   if (tabRec || tabRecStarting || fetchesInFlight > 0 || active.some(d => d.url.startsWith(EXT_BLOB))) return;
-  if (await chrome.offscreen.hasDocument()) chrome.offscreen.closeDocument().catch(() => {});
+  if (!(await chrome.offscreen.hasDocument())) return;
+  // 위에서 기다리는 사이 새 작업이 시작됐을 수 있으므로 닫기 직전에 한 번 더 확인
+  if (fetchesInFlight > 0 || creatingOffscreen || tabRecStarting || closingOffscreen) return;
+  closingOffscreen = chrome.offscreen.closeDocument().catch(() => {}).finally(() => { closingOffscreen = null; });
+  await closingOffscreen;
 }
 
+const offscreenBlobs = new Map(); // 다운로드 번호 → 숨겨진 페이지가 만든 임시 주소
 chrome.downloads.onChanged.addListener(d => {
+  if (d.state && d.state.current !== 'in_progress' && offscreenBlobs.has(d.id)) {
+    chrome.runtime.sendMessage({ type: 'offscreen-revoke', url: offscreenBlobs.get(d.id) }).catch(() => {});
+    offscreenBlobs.delete(d.id);
+  }
   if (d.state && d.state.current !== 'in_progress') maybeCloseOffscreen();
 });
 
@@ -500,6 +542,7 @@ function logSave(entry) {
     if (!naming.library) return;
     const { library = [] } = await chrome.storage.local.get('library');
     const [d] = entry.downloadId != null ? await chrome.downloads.search({ id: entry.downloadId }) : [];
+    if (d?.state === 'interrupted') return; // 시작하자마자 실패한 저장(서버 거절 등)은 남기지 않는다
     library.unshift({
       id: crypto.randomUUID(), ts: Date.now(), kind: entry.kind || '', title: (entry.title || '').slice(0, 200),
       pageUrl: /^https?:/.test(entry.pageUrl || '') ? entry.pageUrl : '', site: siteOf(entry.pageUrl),
