@@ -41,6 +41,12 @@ jobs:
           notes = [l.strip() for l in open('release-notes.txt', encoding='utf-8') if l.strip()][:3]
           json.dump({'version': version, 'notes': notes}, open('docs/version.json', 'w', encoding='utf-8'), ensure_ascii=False)
           print(open('docs/version.json', encoding='utf-8').read())
+          # 소개 페이지에 적힌 버전(v0.0.0 꼴)도 같은 버전으로 맞춘다
+          import re
+          html = open('docs/index.html', encoding='utf-8').read()
+          html, n = re.subn(r'\bv\d+\.\d+\.\d+\b', 'v' + version, html)
+          open('docs/index.html', 'w', encoding='utf-8').write(html)
+          print('index.html version labels updated:', n)
           PY
 
       - uses: actions/configure-pages@v5

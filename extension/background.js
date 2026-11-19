@@ -58,7 +58,15 @@ chrome.webRequest.onHeadersReceived.addListener(
 
     const media = await load();
     const list = (media[details.tabId] ||= []);
-    if (list.some(m => m.url === details.url)) return;
+    // 같은 주소를 다시 불러오면(프레임을 새로 만든 경우 등) 지금 문서의 것으로 바꿔 맨 앞에 둔다.
+    // 처음 본 문서 ID를 그대로 두면 팝업이 "다른 페이지의 파일"로 보고 숨긴다.
+    const old = list.findIndex(m => m.url === details.url);
+    if (old >= 0) {
+      const [m] = list.splice(old, 1);
+      list.unshift({ ...m, size: size || m.size, ts: Date.now(), documentId: details.documentId || m.documentId });
+      save(media);
+      return;
+    }
     // documentId: 이 파일을 불러온 문서. 뒤로 가기로 예전 페이지가 되살아났을 때 다른 페이지의 파일이 섞이지 않게 팝업에서 걸러낸다
     list.unshift({ url: details.url, type: type || 'video/mp4', size, ts: Date.now(), documentId: details.documentId || '' });
     list.length = Math.min(list.length, MAX_PER_TAB);
@@ -99,6 +107,9 @@ chrome.webRequest.onHeadersReceived.addListener(
     if (d.tabId < 0 || d.frameId !== 0 || (d.documentLifecycle && d.documentLifecycle !== 'active')) return;
     if (d.statusCode < 200 || d.statusCode >= 300 || d.statusCode === 204 || d.statusCode === 205) return;
     if (/attachment/i.test(header(d.responseHeaders, 'content-disposition'))) return;
+    // zip·실행 파일처럼 화면에 열리지 않고 다운로드되는 형식도 페이지를 바꾸지 않는다
+    const type = header(d.responseHeaders, 'content-type').split(';')[0].trim().toLowerCase();
+    if (type && !/^(text|image|video|audio)\/|^application\/(xhtml\+xml|xml|pdf|json)$/.test(type)) return;
     clearTab(d.tabId);
   },
   { urls: ['<all_urls>'], types: ['main_frame'] },
@@ -139,11 +150,17 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     let u = null;
     try { u = new URL(msg.url); } catch {}
     if (!_sender.tab || !u || !/^https?:$/.test(u.protocol)) { sendResponse({ ok: false, error: '잘못된 요청입니다.' }); return; }
-    load().then(media => {
-        const seen = (media[_sender.tab.id] || []).find(f => f.url === msg.url);
+    load().then(async media => {
+        const EXT_OF = { 'video/webm': 'webm', 'video/quicktime': 'mov', 'video/mp4': 'mp4' };
+        const bare = s => s.split('#')[0];
+        const seen = (media[_sender.tab.id] || []).find(f => bare(f.url) === bare(msg.url));
         const byPath = u.pathname.match(/\.(mp4|webm|mov)$/i)?.[1].toLowerCase();
-        const byType = seen && { 'video/webm': 'webm', 'video/quicktime': 'mov', 'video/mp4': 'mp4' }[seen.type];
-        const ext = byPath || byType;
+        let ext = byPath || (seen && EXT_OF[seen.type]);
+        // 목록에 없는 주소(오래돼 밀려났거나 리다이렉트된 경우)는 서버에 파일 형식만 물어 확인한다
+        if (!ext) {
+          const type = await fetch(msg.url, { method: 'HEAD' }).then(r => r.ok ? (r.headers.get('content-type') || '') : '', () => '');
+          ext = EXT_OF[type.split(';')[0].trim().toLowerCase()];
+        }
         if (!ext) throw new Error('영상 파일로 확인되지 않은 주소입니다.');
         return buildName(msg.title, _sender.tab.url, ext);
       })

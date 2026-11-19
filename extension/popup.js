@@ -269,17 +269,21 @@ async function checkUpdate() {
   if (manifest.update_url) return;
   let { updateCheck } = await chrome.storage.local.get('updateCheck');
   if (!updateCheck || Date.now() - updateCheck.at > 12 * 3600_000) {
+    // 확인에 실패해도(인터넷 끊김, 사이트 응답 없음, 잘못된 내용) 확인 시각은 남겨서 12시간 안에 다시 묻지 않는다.
+    // 이미 알고 있던 새 버전 알림은 그대로 보여준다.
+    updateCheck = { ...updateCheck, at: Date.now() };
     try {
       const info = await (await fetch(UPDATE_INFO, { cache: 'no-store', credentials: 'omit' })).json();
-      if (!VERSION_RE.test(String(info.version))) return;
-      updateCheck = { ...updateCheck, at: Date.now(), latest: String(info.version),
-        notes: (Array.isArray(info.notes) ? info.notes : []).slice(0, 3).map(n => String(n).slice(0, 80)) };
-      await chrome.storage.local.set({ updateCheck });
-    } catch { return; } // 인터넷이 안 되거나 사이트가 응답하지 않으면 조용히 넘어간다
+      if (VERSION_RE.test(String(info.version))) {
+        updateCheck.latest = String(info.version);
+        updateCheck.notes = (Array.isArray(info.notes) ? info.notes : []).slice(0, 3).map(n => String(n).slice(0, 80));
+      }
+    } catch {}
+    await chrome.storage.local.set({ updateCheck });
   }
   if (!VERSION_RE.test(updateCheck.latest || '') || !isNewer(updateCheck.latest, manifest.version)) return;
   if (updateCheck.dismissed === updateCheck.latest) return; // "나중에"를 누른 버전은 다시 묻지 않는다 (더 새 버전이 나오면 다시 알림)
-  $('#update-title').textContent = `새 버전 ${updateCheck.latest}이 나왔습니다 (지금 ${manifest.version})`;
+  $('#update-title').textContent = `새 버전 ${updateCheck.latest} 출시 (지금 ${manifest.version})`;
   $('#update-notes').replaceChildren(...(updateCheck.notes || []).map(n => el('li', { textContent: n })));
   $('#update-get').onclick = () => { chrome.tabs.create({ url: UPDATE_PAGE }); window.close(); };
   $('#update-later').onclick = async () => {
