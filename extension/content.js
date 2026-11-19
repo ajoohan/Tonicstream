@@ -7,7 +7,9 @@
 // (이 파일은 같은 페이지에 여러 번 주입될 수 있어서 맨 바깥에는 const/let 선언을 두지 않는다)
 if (!(() => { try { return typeof window.__tonicstream === 'function' && window.__tonicstream(); } catch { return false; } })()) {
   const __rt = chrome.runtime;
-  window.__tonicstream = () => { try { return !!__rt.id && !!__rt.getURL(''); } catch { return false; } };
+  // 이 사본이 살아 있는지. 새로 주입된 사본이 window.__tonicstream을 덮어써도, 죽은 옛 사본은 자기 것으로 판단해 멈춘다.
+  const alive = () => { try { return !!__rt.id && !!__rt.getURL(''); } catch { return false; } };
+  window.__tonicstream = alive;
 
   // 피드형 사이트(쇼츠/릴스/틱톡)는 영상 요소가 계속 생기고 사라지므로
   // 요소를 강하게 붙잡지 않도록 WeakMap만 쓰고, 찾을 때는 DOM에서 다시 찾는다.
@@ -323,7 +325,7 @@ if (!(() => { try { return typeof window.__tonicstream === 'function' && window.
   addEventListener('mousemove', e => {
     if (e.timeStamp - hbLast < 150) return;
     hbLast = e.timeStamp;
-    if (!window.__tonicstream()) return hideHover(); // 확장이 새로 고쳐져 이 스크립트가 죽은 상태면 아무것도 하지 않음
+    if (!alive()) return hideHover(); // 확장이 새로 고쳐져 이 스크립트가 죽은 상태면 아무것도 하지 않음
     if (Date.now() - settingsAt > 5000) loadSettings();
     clearTimeout(hbHideTimer);
     hbHideTimer = setTimeout(hideHover, 2500);

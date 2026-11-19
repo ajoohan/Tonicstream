@@ -80,6 +80,7 @@ main에 푸시하면 GitHub Actions(`.github/workflows/pages.yml`)가 `extension
 
 1. `extension/manifest.json`의 `version`을 올립니다.
 2. `release-notes.txt`에 이번 버전에서 바뀐 점을 한 줄에 하나씩, 최대 3줄 적습니다. 설치된 확장의 팝업 알림에 그대로 표시됩니다.
-3. main에 반영하면 배포할 때 ZIP과 `version.json`이 자동으로 만들어집니다.
+3. main에 반영하면 배포할 때 ZIP과 `version.json`이 자동으로 만들어지고, 소개 페이지의 버전 표기도 같은 버전으로 바뀝니다.
+4. 스토어에 올릴 때는 `store/README.md`의 버전과 문구를 직접 고칩니다.
 
 ZIP으로 설치한 사용자는 팝업을 열 때(12시간에 한 번) `version.json`을 확인해, 더 새 버전이 있으면 팝업 맨 위에 알림을 봅니다. 알림의 버튼은 소개 페이지의 업데이트 안내(`#update`)로 연결됩니다. 스토어에서 설치한 사용자는 브라우저가 자동으로 업데이트합니다.
