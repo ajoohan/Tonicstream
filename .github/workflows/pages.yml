@@ -3,7 +3,7 @@ name: Deploy stream.plustonic.com
 on:
   push:
     branches: [main]
-    paths: ["docs/**", "extension/**", ".github/workflows/pages.yml"]
+    paths: ["docs/**", "extension/**", "release-notes.txt", ".github/workflows/pages.yml"]
   workflow_dispatch:
 
 permissions:
@@ -30,6 +30,18 @@ jobs:
           rm -f docs/tonicstream-extension.zip
           cd extension && zip -qr ../docs/tonicstream-extension.zip . -x '.*'
           cd .. && unzip -l docs/tonicstream-extension.zip
+
+      # 설치된 확장이 새 버전이 나왔는지 확인할 때 읽는 파일.
+      # 버전은 manifest.json에서, 안내 문구는 release-notes.txt(한 줄에 하나, 최대 3줄)에서 가져온다.
+      - name: Write version.json
+        run: |
+          python3 - <<'PY'
+          import json
+          version = json.load(open('extension/manifest.json'))['version']
+          notes = [l.strip() for l in open('release-notes.txt', encoding='utf-8') if l.strip()][:3]
+          json.dump({'version': version, 'notes': notes}, open('docs/version.json', 'w', encoding='utf-8'), ensure_ascii=False)
+          print(open('docs/version.json', encoding='utf-8').read())
+          PY
 
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
