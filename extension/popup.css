@@ -46,3 +46,5 @@ label.check small { font-weight: 500; color: var(--muted); }
 details.others { margin-top: 2px; }
 details.others summary { font-size: 13.5px; font-weight: 600; color: var(--muted); padding: 4px 0 8px; }
 details.others summary small { font-size: 12px; margin-left: 2px; }
+#update { border-color: var(--accent); margin: 10px 0 0; }
+#update ul { margin: 4px 0 0; padding-left: 18px; word-break: keep-all; }

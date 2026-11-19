@@ -250,9 +250,49 @@ addEventListener('pointerdown', () => { pressing = true; }, true);
 addEventListener('pointerup', () => setTimeout(() => { pressing = false; }, 50), true);
 addEventListener('pointercancel', () => { pressing = false; }, true);
 
+// ── 새 버전 알림 ──
+// ZIP으로 설치한 확장은 브라우저가 자동으로 업데이트하지 않는다. 그래서 팝업을 열 때(12시간에 한 번)
+// 사이트의 version.json을 읽어 더 새 버전이 있으면 알려준다. 보내는 정보는 없고, 받은 것은 버전 번호와 안내 문구뿐이다.
+// 스토어에서 설치한 경우(manifest에 update_url이 있음)는 브라우저가 알아서 업데이트하므로 확인하지 않는다.
+const UPDATE_INFO = 'https://stream.plustonic.com/version.json';
+const UPDATE_PAGE = 'https://stream.plustonic.com/#update';
+const VERSION_RE = /^\d{1,5}(\.\d{1,5}){1,3}$/;
+function isNewer(a, b) {
+  const x = a.split('.').map(Number), y = b.split('.').map(Number);
+  for (let i = 0; i < Math.max(x.length, y.length); i++) {
+    if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0);
+  }
+  return false;
+}
+async function checkUpdate() {
+  const manifest = chrome.runtime.getManifest();
+  if (manifest.update_url) return;
+  let { updateCheck } = await chrome.storage.local.get('updateCheck');
+  if (!updateCheck || Date.now() - updateCheck.at > 12 * 3600_000) {
+    try {
+      const info = await (await fetch(UPDATE_INFO, { cache: 'no-store', credentials: 'omit' })).json();
+      if (!VERSION_RE.test(String(info.version))) return;
+      updateCheck = { ...updateCheck, at: Date.now(), latest: String(info.version),
+        notes: (Array.isArray(info.notes) ? info.notes : []).slice(0, 3).map(n => String(n).slice(0, 80)) };
+      await chrome.storage.local.set({ updateCheck });
+    } catch { return; } // 인터넷이 안 되거나 사이트가 응답하지 않으면 조용히 넘어간다
+  }
+  if (!VERSION_RE.test(updateCheck.latest || '') || !isNewer(updateCheck.latest, manifest.version)) return;
+  if (updateCheck.dismissed === updateCheck.latest) return; // "나중에"를 누른 버전은 다시 묻지 않는다 (더 새 버전이 나오면 다시 알림)
+  $('#update-title').textContent = `새 버전 ${updateCheck.latest}이 나왔습니다 (지금 ${manifest.version})`;
+  $('#update-notes').replaceChildren(...(updateCheck.notes || []).map(n => el('li', { textContent: n })));
+  $('#update-get').onclick = () => { chrome.tabs.create({ url: UPDATE_PAGE }); window.close(); };
+  $('#update-later').onclick = async () => {
+    await chrome.storage.local.set({ updateCheck: { ...updateCheck, dismissed: updateCheck.latest } });
+    $('#update').hidden = true;
+  };
+  $('#update').hidden = false;
+}
+
 (async () => {
   [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   initNaming();
+  checkUpdate();
   $('#library').onclick = () => { chrome.tabs.create({ url: 'library.html' }); window.close(); };
   if (!tab?.id || !/^https?:|^file:/.test(tab.url || '')) {
     // 새 탭·설정 화면 등에서는 화면 녹화만 쓸 수 있다

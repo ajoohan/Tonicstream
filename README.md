@@ -75,3 +75,11 @@ main에 푸시하면 GitHub Actions(`.github/workflows/pages.yml`)가 `extension
 ## Edge 추가 기능 스토어
 
 제출용 설명 문구, 권한 설명, 이미지는 `store/` 폴더에 있습니다. 제출 순서는 `store/README.md`를 보세요.
+
+## 새 버전을 낼 때
+
+1. `extension/manifest.json`의 `version`을 올립니다.
+2. `release-notes.txt`에 이번 버전에서 바뀐 점을 한 줄에 하나씩, 최대 3줄 적습니다. 설치된 확장의 팝업 알림에 그대로 표시됩니다.
+3. main에 반영하면 배포할 때 ZIP과 `version.json`이 자동으로 만들어집니다.
+
+ZIP으로 설치한 사용자는 팝업을 열 때(12시간에 한 번) `version.json`을 확인해, 더 새 버전이 있으면 팝업 맨 위에 알림을 봅니다. 알림의 버튼은 소개 페이지의 업데이트 안내(`#update`)로 연결됩니다. 스토어에서 설치한 사용자는 브라우저가 자동으로 업데이트합니다.
