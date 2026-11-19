@@ -2,6 +2,7 @@
 // 틱톡처럼 Referer를 확인하는 서버를 위해 사용 (Referer는 background.js의 규칙이 붙여줌).
 // 이 페이지는 확장의 배경(background)이 보낸 요청만 처리한다. 웹페이지에 들어간 content.js가 보낸 것(sender.tab 있음)은 무시.
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (!_sender.tab && msg.type === 'offscreen-revoke' && /^blob:/.test(msg.url || '')) { URL.revokeObjectURL(msg.url); return; }
   if (_sender.tab || msg.type !== 'offscreen-fetch') return;
   fetch(msg.url, { credentials: 'include' })
     .then(r => { if (!r.ok) throw new Error(`서버 응답 ${r.status}`); return r.blob(); })

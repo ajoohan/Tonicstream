@@ -249,7 +249,13 @@ if (!(() => { try { return typeof window.__tonicstream === 'function' && window.
       setTimeout(() => URL.revokeObjectURL(url), 60_000);
       const res = await tell({ type: 'save-blob', url, title: title || document.title, ext: 'png', suffix,
         kind: '장면 캡처', thumb: thumbOf(v) });
-      if (!res?.ok) throw new Error(res?.error || '저장 실패');
+      if (!res?.ok) {
+        // 배경이 저장하지 못하면(시크릿 창 등) 페이지에서 직접 저장한다
+        const a = Object.assign(document.createElement('a'), { href: url, download: `${safeName(title || document.title)} ${suffix}.png` });
+        document.documentElement.appendChild(a);
+        a.click();
+        a.remove();
+      }
       return { ok: true, width: c.width, height: c.height };
     } catch (e) {
       const r = v.getBoundingClientRect();

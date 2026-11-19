@@ -18,7 +18,7 @@ const ratingOf = it => it.rating || 0;
 const boards = () => [...new Set(items.map(boardOf).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko'));
 
 // 저장 도중 새 기록이 추가돼도 서로 덮어쓰지 않도록, 고치는 일은 모두 배경(background)의 한 줄 대기열에서 처리한다
-// change: 바꿀 값, null이면 그 기록 삭제. id가 null이면 전체 삭제
+// change: 바꿀 값, null이면 그 기록 삭제. (전체 삭제는 clearAll로 따로 보낸다)
 const update = (id, change) => chrome.runtime.sendMessage({ type: 'library-update', id, change });
 // 메모·태그는 화면에 이미 적혀 있으므로 저장 뒤 목록을 다시 그리지 않는다.
 // (다시 그리면 막 누르려던 버튼이 사라져 클릭이 먹지 않는다)
@@ -186,6 +186,6 @@ $('#f-sort').onchange = e => { view.sort = e.target.value; render(); };
 $('#csv').onclick = exportCsv;
 $('#html').onclick = exportHtml;
 $('#clear').onclick = async () => {
-  if (items.length && confirm(`기록 ${items.length}개를 모두 지울까요? 영상 파일은 지워지지 않습니다.`)) await update(null, null);
+  if (items.length && confirm(`기록 ${items.length}개를 모두 지울까요? 영상 파일은 지워지지 않습니다.`)) await chrome.runtime.sendMessage({ type: 'library-update', clearAll: true });
 };
 load();
