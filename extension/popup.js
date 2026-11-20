@@ -157,7 +157,10 @@ const RECORDER_URL = chrome.runtime.getURL('recorder.html');
 
 async function openRecorder() {
   // 시크릿 창에서 시작한 화면 녹화는 보관함에 남기지 않도록 알려 둔다
-  await chrome.storage.session.set({ screenRecIncognito: !!tab?.incognito });
+  // 녹화가 이미 진행 중일 때(녹화 창 보기)는 건드리지 않는다. 진행 중인 녹화의 값이 바뀌면 안 된다.
+  if (!(await chrome.storage.session.get('screenRec')).screenRec) {
+    await chrome.storage.session.set({ screenRecIncognito: !!tab?.incognito });
+  }
   const [existing] = await chrome.runtime.getContexts({ contextTypes: ['TAB'], documentUrls: [RECORDER_URL] });
   // 브라우저의 화면 선택 창이 이 창 안에 그려지므로, 잘리지 않게 넉넉한 크기로 연다 (녹화가 시작되면 스스로 작아진다)
   if (existing) await chrome.windows.update(existing.windowId, { state: 'normal', focused: true });

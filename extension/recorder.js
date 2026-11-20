@@ -94,7 +94,9 @@ async function start() {
   const name = fileName();
   recorder.ondataavailable = e => e.data.size && chunks.push(e.data);
   const thumbP = grabThumb(display);
-  recorder.onstop = () => finish(chunks, recorder.mimeType || mimeType || 'video/webm', name, thumbP);
+  // 시크릿 창에서 시작했는지는 녹화를 시작할 때 정해 둔다 (끝날 때 읽으면 그 사이 값이 바뀔 수 있다)
+  const incognito = !!(await chrome.storage.session.get('screenRecIncognito')).screenRecIncognito;
+  recorder.onstop = () => finish(chunks, recorder.mimeType || mimeType || 'video/webm', name, thumbP, incognito);
   recorder.onerror = () => recorder.state !== 'inactive' && recorder.stop();
   // 브라우저의 "공유 중지"를 누르거나 녹화하던 창이 닫히면 자동 저장
   video.addEventListener('ended', stop);
@@ -208,7 +210,7 @@ async function grabThumb(stream) {
   } catch { return ''; }
 }
 
-async function finish(chunks, type, name, thumbP) {
+async function finish(chunks, type, name, thumbP, incognito) {
   cleanup();
   if (myWindowId != null) chrome.windows.update(myWindowId, { state: 'normal', focused: true, ...SMALL }).catch(() => {});
   if (!chunks.length) { show('idle'); say('녹화된 내용이 없습니다.'); return; }
@@ -219,8 +221,7 @@ async function finish(chunks, type, name, thumbP) {
     // 이름에 이미 날짜가 있으므로 저장 폴더 설정만 적용
     const filename = await buildName(name, '', ext, { plain: true });
     const downloadId = await safeDownload(url, filename);
-    const { screenRecIncognito } = await chrome.storage.session.get('screenRecIncognito');
-    chrome.runtime.sendMessage({ type: 'log-save', entry: { kind: '화면 녹화', title: name, pageUrl: '', filename, downloadId, thumb: await thumbP, incognito: !!screenRecIncognito } }).catch(() => {});
+    chrome.runtime.sendMessage({ type: 'log-save', entry: { kind: '화면 녹화', title: name, pageUrl: '', filename, downloadId, thumb: await thumbP, incognito } }).catch(() => {});
     // 긴 녹화는 파일을 쓰는 데 시간이 걸린다. 다 쓸 때까지 창을 닫지 못하게 한다 (닫으면 임시 파일이 사라져 저장이 끊긴다)
     saving = true;
     $('#saved').textContent = '저장 중입니다… 창을 닫지 마세요.';
@@ -231,6 +232,7 @@ async function finish(chunks, type, name, thumbP) {
   } catch (e) {
     $('#saved').textContent = `저장하지 못했습니다: ${e.message}`;
   }
+  URL.revokeObjectURL(url); // 저장이 끝났으니 녹화 데이터를 메모리에서 놓아 준다 ("다시 녹화"를 반복해도 쌓이지 않게)
   saving = false;
   $('#again').disabled = $('#close').disabled = false;
   show('done');

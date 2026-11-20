@@ -30,11 +30,18 @@ async function startTabRec(streamId, filename, q = { bits: 8_000_000, w: 1920, h
     video: { mandatory: { ...src, maxWidth: q.w, maxHeight: q.h, maxFrameRate: 30 } },
   });
   // 탭 녹화 중에는 탭 소리가 꺼지므로, 사용자가 계속 들을 수 있게 다시 재생
-  const audioCtx = new AudioContext();
-  audioCtx.createMediaStreamSource(stream).connect(audioCtx.destination);
-
-  const mimeType = MIME_CANDIDATES.find(t => MediaRecorder.isTypeSupported(t)) || '';
-  const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: q.bits });
+  let audioCtx, recorder, mimeType;
+  try {
+    audioCtx = new AudioContext();
+    audioCtx.createMediaStreamSource(stream).connect(audioCtx.destination);
+    mimeType = MIME_CANDIDATES.find(t => MediaRecorder.isTypeSupported(t)) || '';
+    recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: q.bits });
+  } catch (e) {
+    // 준비 도중 실패하면 탭을 잡고 있던 것을 풀어야 다시 시도할 수 있다
+    stream.getTracks().forEach(t => t.stop());
+    audioCtx?.close();
+    throw e;
+  }
   const chunks = [];
   recorder.ondataavailable = e => e.data.size && chunks.push(e.data);
   recorder.onstop = () => {
