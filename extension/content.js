@@ -68,6 +68,19 @@ if (!(() => { try { return typeof window.__tonicstream === 'function' && window.
     el.addEventListener(ev, () => { clearTimeout(t); res(); }, { once: true });
   });
 
+  // 페이지 위쪽에 잠깐 떴다 사라지는 안내
+  function toast(text) {
+    const host = document.createElement('div');
+    host.style.cssText = 'all:initial;position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:2147483647;max-width:min(92vw,560px)';
+    const root = host.attachShadow({ mode: 'closed' });
+    const box = document.createElement('div');
+    box.style.cssText = 'padding:11px 16px;border-radius:12px;background:rgba(24,24,28,.94);color:#f0f0f4;border:1px solid rgba(255,255,255,.14);box-shadow:0 8px 24px rgba(0,0,0,.35);font:600 14px/1.45 "Pretendard Variable",Pretendard,system-ui,"Segoe UI","Malgun Gothic",sans-serif;word-break:keep-all';
+    box.textContent = text;
+    root.appendChild(box);
+    (document.body || document.documentElement).appendChild(host);
+    setTimeout(() => host.remove(), 7000);
+  }
+
   // ── 녹화 중 페이지에 띄우는 정지 바 ──
   // 영상 요소만 녹화하므로 이 바는 결과 파일에 찍히지 않는다.
   let bar = null, barTimer = null;
@@ -199,7 +212,12 @@ if (!(() => { try { return typeof window.__tonicstream === 'function' && window.
       if (!thumb && v.currentTime > startTime + 0.5) thumb = thumbOf(v); // 첫 장면이 검은 화면인 경우가 많아 조금 지난 뒤 찍는다
     };
     const onStop = () => stopRecording(id);
-    const handlers = { pause: sync, play: sync, timeupdate: onTime, ended: onStop, emptied: onStop };
+    // 영상이 다른 것으로 바뀌면(유튜브 중간 광고 등) 녹화를 이어 갈 수 없어 여기까지 저장한다. 조용히 끊기지 않게 알려 준다.
+    const onSwap = () => {
+      if (recs.has(id) && !v.ended) toast('영상이 바뀌어 여기까지만 저장했습니다. 긴 영상이나 광고가 있는 영상은 "탭 녹화"를 이용해 보세요.');
+      stopRecording(id);
+    };
+    const handlers = { pause: sync, play: sync, timeupdate: onTime, ended: onStop, emptied: onSwap };
     for (const [ev, fn] of Object.entries(handlers)) v.addEventListener(ev, fn);
 
     const cleanup = () => {
@@ -313,7 +331,7 @@ if (!(() => { try { return typeof window.__tonicstream === 'function' && window.
   async function saveFromPage(v) {
     const src = /^https?:/.test(v.currentSrc) ? v.currentSrc : '';
     const cross = src && new URL(src).origin !== location.origin && !v.crossOrigin;
-    if (src && (cross || /\.(mp4|webm|mov)(\?|$)/i.test(src))) {
+    if (src && (cross || /\.(mp4|webm|mov)$/i.test(new URL(src).pathname))) { // 주소 뒤의 ?… #… 는 빼고 판단
       const res = await tell({ type: 'save-video-url', url: src, title: document.title, thumb: thumbOf(v) });
       if (res?.ok) return { ok: true, text: '저장했습니다' };
       if (cross) return { ok: false, error: res?.error || '받기 실패' };

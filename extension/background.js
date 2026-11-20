@@ -48,6 +48,7 @@ function isSegmentUrl(u) {
 chrome.webRequest.onHeadersReceived.addListener(
   async details => {
     if (details.tabId < 0) return;
+    if (details.documentLifecycle && details.documentLifecycle !== 'active') return; // 미리 불러오는 페이지의 것은 세지 않는다
     if (details.statusCode !== 200 && details.statusCode !== 206) return; // 리다이렉트·오류 응답 제외
     const type = header(details.responseHeaders, 'content-type').split(';')[0].trim().toLowerCase();
     const url = new URL(details.url);
@@ -176,6 +177,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       })
       .then(async filename => {
         const id = await download(msg.url, filename);
+        // 서버가 곧바로 거절한 경우(403, 만료된 주소 등) 성공으로 답하지 않는다
+        if (await failedEarly(id)) throw new Error('서버가 다운로드를 거절했습니다.');
         logSave({ kind: '원본 다운로드', title: msg.title, pageUrl: _sender.tab.url, filename, downloadId: id, thumb: msg.thumb, incognito: _sender.tab.incognito });
         return id;
       })
@@ -216,6 +219,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     buildName(msg.title, msg.pageUrl, msg.ext)
       .then(async filename => {
         const id = await download(msg.url, filename);
+        // 서버가 곧바로 거절한 경우(403, 만료된 주소 등) 성공으로 답하지 않는다
+        if (await failedEarly(id)) throw new Error('서버가 다운로드를 거절했습니다.');
         logSave({ kind: '원본 다운로드', title: msg.title, pageUrl: msg.pageUrl, filename, downloadId: id, thumb: msg.thumb, incognito: msg.incognito });
         return id;
       })
@@ -318,6 +323,7 @@ async function startTabRecording(tabId, streamId, title, pageUrl) {
     await chrome.storage.session.set({ tabRec: rec });
   } finally {
     tabRecStarting--;
+    if (!rec) maybeCloseOffscreen(); // 시작에 실패했으면 숨겨진 페이지를 정리
   }
   updateBadge(tabId);
   openTabRecControl(tabId);
@@ -353,8 +359,9 @@ async function openTabRecControl(tabId) {
     const { windowId } = await chrome.tabs.get(tabId);
     const w = await chrome.windows.get(windowId);
     if (w.state === 'normal' || w.state === 'maximized') {
-      opts.left = Math.max(0, w.left + w.width - W - 24);
-      opts.top = Math.max(0, w.top + w.height - H - 24);
+      // 왼쪽·위쪽 보조 모니터는 좌표가 음수이므로 0으로 막지 않고, 브라우저 창 안쪽으로만 맞춘다
+      opts.left = Math.max(w.left, w.left + w.width - W - 24);
+      opts.top = Math.max(w.top, w.top + w.height - H - 24);
     }
   } catch {}
   await chrome.windows.create(opts).catch(() => chrome.windows.create({ url: 'tabctl.html', type: 'popup', width: W, height: H }));
@@ -534,6 +541,7 @@ async function makeThumb(dataUrl) {
 // 저장할 때마다 제목·원본 주소·날짜·미리보기를 이 브라우저에만 기록한다(chrome.storage.local).
 // 영상 파일 자체는 보관하지 않는다. 설정에서 끌 수 있다.
 const LIBRARY_MAX = 300;
+const LIBRARY_HARD_MAX = 600; // 표시해 둔 기록만으로 이 수를 넘으면 그때는 가장 오래된 것부터 지운다
 let libraryQueue = Promise.resolve();
 function logSave(entry) {
   if (entry.incognito) return libraryQueue; // 시크릿 창에서 저장한 것은 기록하지 않는다
@@ -551,7 +559,14 @@ function logSave(entry) {
       thumb: (entry.thumb || '').length <= THUMB_MAX ? entry.thumb || '' : '', memo: '', tags: '',
       board: String(naming.board || '').slice(0, 40), rating: 0,
     });
-    library.length = Math.min(library.length, LIBRARY_MAX);
+    // 한도를 넘으면 표시(보드·별점·메모·태그)가 없는 오래된 기록부터 지운다. 정리해 둔 기록은 최대한 남긴다.
+    const marked = x => x.board || x.rating || x.memo || x.tags;
+    while (library.length > LIBRARY_MAX) {
+      let i = library.length - 1;
+      while (i > 0 && marked(library[i])) i--;
+      if (i === 0) { if (library.length > LIBRARY_HARD_MAX) library.pop(); else break; }
+      else library.splice(i, 1);
+    }
     await saveLibrary(library);
   }).catch(e => console.warn('보관함 기록 실패', e));
   return libraryQueue;
