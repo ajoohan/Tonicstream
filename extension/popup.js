@@ -46,7 +46,8 @@ function videoCard(v, i) {
   const row = el('div', { className: 'row' });
   let form = '';
   if (v.recording) {
-    row.append(el('span', { className: 'rec', textContent: `● 녹화 중 ${fmtTime(v.elapsed)}` }),
+    row.append(el('span', { className: 'rec', textContent: `${v.hold ? `❚❚ ${v.hold}` : '● 녹화 중'} ${fmtTime(v.elapsed)}`,
+      title: v.hold ? '영상이 멈춰 있는 동안은 녹화도 쉬었다가 이어 붙입니다' : '' }),
       el('button', { className: 'primary', textContent: '정지 후 저장', onclick: () => send(v.frameId, { type: 'stop', id: v.id }) }));
   } else if (v.crossOrigin && v.directSrc) {
     row.append(el('button', { className: 'primary', textContent: '원본 MP4 다운로드', onclick: () => download(v.directSrc, '', v) }));
