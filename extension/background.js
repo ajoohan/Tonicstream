@@ -37,6 +37,20 @@ function totalSize(headers) {
   return Number(header(headers, 'content-length')) || 0;
 }
 
+// 바로 받을 수 있는 영상 파일 형식. 확장자와 서버가 알려 주는 형식(content-type) 둘 다 본다.
+const VIDEO_EXT = /\.(mp4|m4v|webm|mov|ogv|mkv)$/i;
+const EXT_OF_TYPE = { 'video/mp4': 'mp4', 'video/x-m4v': 'm4v', 'video/webm': 'webm', 'video/quicktime': 'mov', 'video/ogg': 'ogv', 'video/x-matroska': 'mkv' };
+// 조각 스트리밍(HLS·DASH)의 목록 파일. 이런 페이지는 영상이 조각으로 나뉘어 와서 원본 파일이 따로 없다.
+const STREAM_TYPE = /^application\/(vnd\.apple\.mpegurl|x-mpegurl|dash\+xml)$/;
+const STREAM_EXT = /\.(m3u8|mpd)$/i;
+
+function looksLikeVideo(type, url, headers) {
+  if (/^video\//.test(type)) return !/^video\/(mp2t|iso\.segment|vnd\.dlna\.mpeg-tts)$/.test(type); // TS 조각 제외
+  if (VIDEO_EXT.test(url.pathname)) return true;
+  // 형식을 "일반 파일"로만 알려 주는 서버: 내려받을 파일 이름이 영상이면 영상으로 본다
+  return /octet-stream/.test(type) && /filename[^;]*\.(mp4|m4v|webm|mov|ogv|mkv)/i.test(header(headers, 'content-disposition'));
+}
+
 function isSegmentUrl(u) {
   // MSE 스트리밍 조각: 단독 재생이 안 되므로 목록에서 제외
   return u.hostname.endsWith('googlevideo.com') ||
@@ -52,8 +66,8 @@ chrome.webRequest.onHeadersReceived.addListener(
     if (details.statusCode !== 200 && details.statusCode !== 206) return; // 리다이렉트·오류 응답 제외
     const type = header(details.responseHeaders, 'content-type').split(';')[0].trim().toLowerCase();
     const url = new URL(details.url);
-    const looksVideo = /^video\/(mp4|webm|quicktime)$/.test(type) || /\.(mp4|webm|mov)$/i.test(url.pathname);
-    if (!looksVideo || isSegmentUrl(url)) return;
+    if (STREAM_TYPE.test(type) || STREAM_EXT.test(url.pathname)) { markStream(details.tabId, details.timeStamp); return; }
+    if (!looksLikeVideo(type, url, details.responseHeaders) || isSegmentUrl(url)) return;
     const size = totalSize(details.responseHeaders);
     const sizeKnown = !!(header(details.responseHeaders, 'content-range') || header(details.responseHeaders, 'content-length'));
     if (sizeKnown && size < 100 * 1024) return; // 빈 응답, 아이콘/미리보기 같은 아주 작은 파일 제외
@@ -65,12 +79,12 @@ chrome.webRequest.onHeadersReceived.addListener(
     const old = list.findIndex(m => m.url === details.url);
     if (old >= 0) {
       const [m] = list.splice(old, 1);
-      list.unshift({ ...m, size: size || m.size, ts: Date.now(), documentId: details.documentId || m.documentId });
+      list.unshift({ ...m, size: size || m.size, ts: details.timeStamp, documentId: details.documentId || m.documentId });
       save(media);
       return;
     }
     // documentId: 이 파일을 불러온 문서. 뒤로 가기로 예전 페이지가 되살아났을 때 다른 페이지의 파일이 섞이지 않게 팝업에서 걸러낸다
-    list.unshift({ url: details.url, type: type || 'video/mp4', size, ts: Date.now(), documentId: details.documentId || '' });
+    list.unshift({ url: details.url, type: type || 'video/mp4', size, ts: details.timeStamp, documentId: details.documentId || '' });
     list.length = Math.min(list.length, MAX_PER_TAB);
     save(media);
     updateBadge(details.tabId);
@@ -91,12 +105,73 @@ async function updateBadge(tabId) {
   } catch { chrome.action.setBadgeText({ tabId, text: '' }).catch(() => {}); }
 }
 
-async function clearTab(tabId) {
+// before: 새 페이지의 응답 시각. 그보다 먼저 받은 것(이전 페이지의 파일)만 지운다.
+// 배경이 잠들어 있다 깨어날 때는 "페이지가 바뀜" 신호가 "영상 파일 발견" 신호보다 늦게 도착할 수 있다.
+// 도착 순서로 지우면 새 페이지에서 방금 찾은 파일까지 지워지므로, 실제 발생 시각으로 판단한다.
+async function clearTab(tabId, before = Infinity) {
+  if ((streamTabs.get(tabId) ?? Infinity) < before || before === Infinity) {
+    if (streamTabs.delete(tabId)) chrome.storage.session.set({ streamTabs: [...streamTabs] });
+  }
   const media = await load();
   if (!media[tabId]) return;
-  delete media[tabId];
+  const keep = media[tabId].filter(m => m.ts >= before);
+  if (keep.length === media[tabId].length) return;
+  if (keep.length) media[tabId] = keep; else delete media[tabId];
   save(media);
   updateBadge(tabId);
+}
+
+// 조각 스트리밍을 쓰는 탭. 팝업이 "원본 파일이 없는 이유"를 알려 주는 데 쓴다.
+const streamTabs = new Map(); // 탭 → 스트리밍 목록 파일을 본 시각
+chrome.storage.session.get('streamTabs').then(r => (r.streamTabs || []).forEach(([t, ts]) => streamTabs.has(t) || streamTabs.set(t, ts)));
+function markStream(tabId, ts) {
+  if (streamTabs.has(tabId)) return;
+  streamTabs.set(tabId, ts);
+  chrome.storage.session.set({ streamTabs: [...streamTabs] });
+}
+
+// ── 페이지에서 찾은 영상 주소 확인 ───────────────────────
+// content.js가 페이지 안에서 찾은 후보 주소(아직 재생하지 않은 영상, 링크, 공유용 정보 등)를 서버에 물어
+// 실제 영상 파일인 것만 "바로 다운로드" 목록에 넣는다. 같은 주소는 한 번만 묻는다.
+const probed = new Map(); // 주소 → 확인 결과(null이면 영상 아님)
+async function probeOne(url) {
+  if (probed.has(url)) return probed.get(url);
+  let u;
+  try { u = new URL(url); } catch { return null; }
+  if (!/^https?:$/.test(u.protocol) || isSegmentUrl(u) || STREAM_EXT.test(u.pathname)) { probed.set(url, null); return null; }
+  const ask = init => fetch(url, { credentials: 'include', ...init }).then(r => {
+    r.body?.cancel().catch(() => {});
+    if (!r.ok) return null;
+    const type = (r.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+    const range = r.headers.get('content-range')?.match(/\/(\d+)$/);
+    const size = range ? Number(range[1]) : (init.method === 'HEAD' ? Number(r.headers.get('content-length')) || 0 : 0);
+    return { type, size, disp: r.headers.get('content-disposition') || '' };
+  }, () => null);
+  // HEAD를 막는 서버가 많아, 안 되면 첫 1바이트만 받아 확인한다
+  const info = (await ask({ method: 'HEAD' })) || (await ask({ headers: { Range: 'bytes=0-0' } }));
+  const ok = info && looksLikeVideo(info.type, u, [{ name: 'content-disposition', value: info.disp }]) && !STREAM_TYPE.test(info.type)
+    && !(info.size && info.size < 100 * 1024);
+  const result = ok ? { type: /^video\//.test(info.type) ? info.type : 'video/mp4', size: info.size } : null;
+  if (probed.size > 500) probed.clear();
+  probed.set(url, result);
+  return result;
+}
+async function probeMedia(tabId, urls) {
+  const media = await load();
+  const known = new Set((media[tabId] || []).map(m => m.url.split('#')[0]));
+  const fresh = [...new Set(urls.map(u => String(u).split('#')[0]))].filter(u => !known.has(u)).slice(0, 12);
+  const results = await Promise.all(fresh.map(async url => ({ url, info: await probeOne(url) })));
+  const found = results.filter(r => r.info);
+  if (!found.length) return 0;
+  const now = await load();
+  const list = (now[tabId] ||= []);
+  for (const { url, info } of found) {
+    if (!list.some(m => m.url.split('#')[0] === url)) list.push({ url, type: info.type, size: info.size, ts: Date.now(), documentId: '', found: true });
+  }
+  list.length = Math.min(list.length, MAX_PER_TAB);
+  save(now);
+  updateBadge(tabId);
+  return found.length;
 }
 
 chrome.tabs.onRemoved.addListener(tabId => { clearTab(tabId); setVideoRec(tabId, null, false); });
@@ -114,15 +189,15 @@ chrome.webRequest.onHeadersReceived.addListener(
     const opensInTab = /^(text|image|video|audio)\/|^application\/(xhtml\+xml|xml|pdf|json|javascript)$|\+(xml|json)$/.test(type)
       && !/^text\/(csv|calendar|x-vcard|vcard|tab-separated-values)$|^image\/tiff$|^video\/x-matroska$|^audio\/x-(ms-wma|aiff)$/.test(type);
     if (type && !opensInTab) return;
-    clearTab(d.tabId);
+    clearTab(d.tabId, d.timeStamp);
   },
   { urls: ['<all_urls>'], types: ['main_frame'] },
   ['responseHeaders']
 );
 
 // 확장 자체 화면(팝업·보관함·녹화 창·숨겨진 페이지)에서만 받는 요청. 웹페이지에 들어간 content.js가 보낸 것은 거절한다.
-const EXT_ONLY = new Set(['tabrec-start', 'tabrec-stop', 'tabrec-ended', 'download', 'shot-tab', 'log-save', 'library-update']);
-const SAVE_EXTS = new Set(['mp4', 'webm', 'mov', 'png']);
+const EXT_ONLY = new Set(['tabrec-start', 'tabrec-stop', 'tabrec-ended', 'download', 'shot-tab', 'log-save', 'library-update', 'probe-media']);
+const SAVE_EXTS = new Set(['mp4', 'm4v', 'webm', 'mov', 'ogv', 'mkv', 'png']);
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (EXT_ONLY.has(msg.type) && !_sender.url?.startsWith(chrome.runtime.getURL(''))) return;
@@ -159,10 +234,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     try { u = new URL(msg.url); } catch {}
     if (!_sender.tab || !u || !/^https?:$/.test(u.protocol)) { sendResponse({ ok: false, error: '잘못된 요청입니다.' }); return; }
     load().then(async media => {
-        const EXT_OF = { 'video/webm': 'webm', 'video/quicktime': 'mov', 'video/mp4': 'mp4' };
+        const EXT_OF = EXT_OF_TYPE;
         const bare = s => s.split('#')[0];
         const seen = (media[_sender.tab.id] || []).find(f => bare(f.url) === bare(msg.url));
-        const byPath = u.pathname.match(/\.(mp4|webm|mov)$/i)?.[1].toLowerCase();
+        const byPath = u.pathname.match(VIDEO_EXT)?.[1].toLowerCase();
         let ext = byPath || (seen && EXT_OF[seen.type]);
         // 목록에 없는 주소(오래돼 밀려났거나 리다이렉트된 경우)는 서버에 파일 형식만 물어 확인한다
         if (!ext) {
@@ -215,6 +290,11 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     load().then(media => sendResponse(media[msg.tabId] || []));
     return true;
   }
+  if (msg.type === 'probe-media') {
+    probeMedia(msg.tabId, Array.isArray(msg.urls) ? msg.urls : []).then(n => sendResponse({ added: n }), () => sendResponse({ added: 0 }));
+    return true;
+  }
+  if (msg.type === 'has-stream') { sendResponse(streamTabs.has(msg.tabId)); return; }
   if (msg.type === 'download') {
     buildName(msg.title, msg.pageUrl, msg.ext)
       .then(async filename => {

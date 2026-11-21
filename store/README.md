@@ -7,7 +7,7 @@
 - 업로드 파일: https://stream.plustonic.com/tonicstream-extension.zip
   - `extension/` 폴더를 압축한 파일로, 배포할 때마다 자동으로 새로 만들어집니다.
   - `manifest.json`이 압축 파일 맨 위에 있어서 그대로 올리면 됩니다.
-- 버전: 0.8.5
+- 버전: 0.9.0
 
 ## 2. 속성 (Properties)
 
@@ -123,6 +123,7 @@ Permission justifications:
 - Hover save button: on ad library pages (facebook.com/ads/library, library.tiktok.com, TikTok Creative Center) the content script shows a "저장" button over the hovered <video>; the user can enable it on all sites or turn it off in settings. Clicking it downloads the video file or starts recording that element.
 - Camera (no manifest permission; browser prompt): only when the user clicks "웹캠 창 띄우기" in the recorder window. The camera stream is shown in a Picture-in-Picture window on the user's own screen and is not stored or sent.
 - Update notice: when installed outside the store (no update_url), the popup fetches https://stream.plustonic.com/version.json at most once every 12 hours and shows a notice if a newer version exists. It sends no user data and downloads no code; store installs skip this check.
+- Original-file detection: besides response headers (webRequest), when the user opens the popup the content script collects candidate video URLs already present in the page (<video>/<source> attributes, links to video files, og:video / JSON-LD VideoObject, Resource Timing entries). The background confirms each candidate with a HEAD (or 1-byte range) request and lists only real video files. Requests go only to URLs found on the page the user is viewing.
 - scripting + activeTab: inject the content script into frames that loaded before installation when the user opens the popup.
 - storage: keep the list of detected files per tab for the current session (chrome.storage.session).
 

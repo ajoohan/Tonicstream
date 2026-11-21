@@ -106,12 +106,26 @@ async function snapshot(v) {
   say(shot?.ok ? (res.top ? '장면을 저장했습니다. (화면에 보이는 크기)' : '장면을 저장했습니다. (탭 화면 전체)') : `장면 캡처 실패: ${shot?.error || ''}`);
 }
 
-function fileCard(f) {
-  let host = '';
-  try { host = new URL(f.url).hostname; } catch {}
+function fileCard(f, i, all) {
+  let host = '', name = '';
+  try { const u = new URL(f.url); host = u.hostname; name = decodeURIComponent(u.pathname.split('/').pop() || ''); } catch {}
+  if (name.length > 38) name = name.slice(0, 22) + '…' + name.slice(-13);
+  // 크기순으로 늘어놓으므로 맨 위가 보통 가장 화질이 좋은 파일이다
+  const best = all.length > 1 && i === 0 && f.size ? ' · 가장 큰 파일' : '';
   return el('div', { className: 'card' },
-    el('div', { className: 'meta', textContent: `${fmtSize(f.size)} · ${host}` }),
+    el('div', { className: 'meta', textContent: `${fmtSize(f.size)}${best} · ${host}` }),
+    ...(name ? [el('div', { className: 'meta fname', textContent: name + (f.found ? ' · 페이지에서 찾음' : '') })] : []),
     el('div', { className: 'row' }, el('button', { className: 'primary', textContent: '다운로드', onclick: () => download(f.url, f.type) })));
+}
+
+// 페이지 안에 적혀 있는 영상 주소를 찾아(아직 재생하지 않은 영상 등) 목록에 더한다. 팝업을 열 때와 새로고침 때 한 번씩.
+async function scanForFiles() {
+  const replies = await Promise.all((frameIds || [0]).map(frameId =>
+    chrome.tabs.sendMessage(tab.id, { type: 'scan' }, { frameId }).catch(() => null)));
+  const urls = [...new Set(replies.flatMap(r => r?.urls || []))];
+  if (!urls.length) return;
+  const res = await chrome.runtime.sendMessage({ type: 'probe-media', tabId: tab.id, urls }).catch(() => null);
+  if (res?.added) render();
 }
 
 async function download(url, type = '', v = null) {
@@ -119,8 +133,8 @@ async function download(url, type = '', v = null) {
   const thumb = v ? (await chrome.tabs.sendMessage(tab.id, { type: 'thumb', id: v.id }, { frameId: v.frameId }).catch(() => null))?.thumb || '' : '';
   // 주소의 확장자를 먼저 보고, 없으면 파일 형식(video/webm 등)으로 정한다
   let fromUrl = '';
-  try { fromUrl = new URL(url).pathname.match(/\.(mp4|webm|mov)$/i)?.[1].toLowerCase() || ''; } catch {}
-  const fromType = { 'video/webm': 'webm', 'video/quicktime': 'mov', 'video/mp4': 'mp4' }[type.split(';')[0]] || '';
+  try { fromUrl = new URL(url).pathname.match(/\.(mp4|m4v|webm|mov|ogv|mkv)$/i)?.[1].toLowerCase() || ''; } catch {}
+  const fromType = { 'video/webm': 'webm', 'video/quicktime': 'mov', 'video/mp4': 'mp4', 'video/x-m4v': 'm4v', 'video/ogg': 'ogv', 'video/x-matroska': 'mkv' }[type.split(';')[0]] || '';
   const ext = fromUrl || fromType || 'mp4';
   const res = await chrome.runtime.sendMessage({ type: 'download', url, title: tab.title, pageUrl: tab.url, ext, thumb, incognito: tab.incognito });
   say(res?.ok ? '다운로드를 시작했습니다.' : `다운로드 실패: ${res?.error || ''} → "탭 녹화"를 이용해 보세요.`);
@@ -206,17 +220,21 @@ function videoList(videos) {
 
 async function render() {
   renderScreenRec();
-  const [videos, files, rec] = await Promise.all([
+  const [videos, files, rec, hasStream] = await Promise.all([
     frameVideos(),
     chrome.runtime.sendMessage({ type: 'getMedia', tabId: tab.id }),
     chrome.runtime.sendMessage({ type: 'tabrec-status' }),
+    chrome.runtime.sendMessage({ type: 'has-stream', tabId: tab.id }).catch(() => false),
   ]);
   renderTabRec(rec);
   $('#videos').replaceChildren(...videoList(videos));
   // 뒤로 가기 등으로 다른 페이지의 파일이 남아 있으면 지금 페이지 것만 보여준다
-  const mine = (files || []).filter(f => !f.documentId || !docIds.size || docIds.has(f.documentId));
-  $('#files').replaceChildren(...(mine.length ? mine.map(fileCard)
-    : [el('p', { className: 'empty', textContent: '감지된 원본 파일이 없습니다.' })]));
+  const mine = (files || []).filter(f => !f.documentId || !docIds.size || docIds.has(f.documentId))
+    .sort((a, b) => (b.size || 0) - (a.size || 0)); // 큰 파일(보통 고화질)부터
+  const none = hasStream
+    ? '이 페이지는 영상을 조각으로 나눠 보내는 스트리밍 방식이라 원본 파일이 따로 없습니다. 위의 "화면 녹화 저장"을 이용하세요.'
+    : '감지된 원본 파일이 없습니다. 영상을 한 번 재생하면 잡히는 경우가 많습니다.';
+  $('#files').replaceChildren(...(mine.length ? mine.map(fileCard) : [el('p', { className: 'empty', textContent: none })]));
 }
 
 // ── 저장 설정 (폴더·파일 이름 규칙) ──
@@ -312,8 +330,9 @@ async function checkUpdate() {
     setInterval(() => { if (!pressing && document.querySelector('.rec')) renderScreenRec(); }, 1000);
     return;
   }
-  $('#refresh').onclick = () => { $('#refresh').dataset.force = '1'; render(); };
+  $('#refresh').onclick = async () => { $('#refresh').dataset.force = '1'; await render(); scanForFiles(); };
   await render();
+  scanForFiles();
   // 구간 입력칸이 열려 있으면 입력 중인 값이 지워지지 않게 새로 그리지 않는다
   setInterval(() => { if (!pressing && document.querySelector('.rec') && !document.querySelector('.range:not([hidden])')) render(); }, 1000);
 })();

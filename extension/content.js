@@ -68,6 +68,55 @@ if (!(() => { try { return typeof window.__tonicstream === 'function' && window.
     el.addEventListener(ev, () => { clearTimeout(t); res(); }, { once: true });
   });
 
+  // ── 페이지 안에서 영상 파일 주소 찾기 ──
+  // 네트워크로 지나간 것만 보면 놓치는 경우(아직 재생하지 않은 영상, 확장이 켜지기 전에 불러온 영상)를 보완한다.
+  // 여기서는 후보만 모으고, 실제 영상 파일인지는 배경(background)이 서버에 물어 확인한다.
+  function scanPage() {
+    const EXT = /\.(mp4|m4v|webm|mov|ogv|mkv)$/i;
+    const out = new Set();
+    const add = (raw, sure) => {
+      if (!raw || out.size >= 40) return;
+      try {
+        const u = new URL(raw, document.baseURI);
+        if (/^https?:$/.test(u.protocol) && (sure || EXT.test(u.pathname))) out.add(u.href.split('#')[0]);
+      } catch {}
+    };
+    // 1) 영상 요소와 그 안의 <source> (재생 전이라도 주소는 적혀 있다)
+    for (const v of document.querySelectorAll('video')) {
+      add(v.currentSrc, true); add(v.getAttribute('src'), true);
+      for (const s of v.querySelectorAll('source[src]')) add(s.getAttribute('src'), /^video\//.test(s.type || '') || !s.type);
+      for (const a of ['data-src', 'data-video-src', 'data-mp4', 'data-video']) add(v.getAttribute(a));
+    }
+    // 2) 영상 파일로 가는 링크
+    for (const a of [...document.querySelectorAll('a[href]')].slice(0, 400)) add(a.getAttribute('href'));
+    // 3) 공유용 정보(og:video 등). 플레이어 페이지 주소인 경우가 많아 영상 형식으로 표시된 것만 믿는다
+    const ogType = document.querySelector('meta[property="og:video:type"]')?.content || '';
+    for (const m of document.querySelectorAll('meta[property="og:video"], meta[property="og:video:url"], meta[property="og:video:secure_url"], meta[name="twitter:player:stream"]')) {
+      add(m.content, /^video\//.test(ogType) || m.getAttribute('name') === 'twitter:player:stream');
+    }
+    // 4) 검색엔진용 정보(JSON-LD)의 영상 주소
+    for (const s of [...document.querySelectorAll('script[type="application/ld+json"]')].slice(0, 10)) {
+      if (s.textContent.length > 300_000) continue;
+      try {
+        const walk = o => {
+          if (!o || typeof o !== 'object') return;
+          if (Array.isArray(o)) return o.forEach(walk);
+          if (/VideoObject/i.test([].concat(o['@type'] || []).join(' '))) add(o.contentUrl, true);
+          Object.values(o).forEach(walk);
+        };
+        walk(JSON.parse(s.textContent));
+      } catch {}
+    }
+    // 5) 이 페이지가 이미 불러온 것들(브라우저가 기록해 둔 목록). 확장이 보기 전에 받은 영상도 여기에 남아 있다
+    try {
+      // 영상 요소가 불러온 것, 그리고 스크립트가 받아 온 큰 파일(500KB 이상)을 후보로 본다
+      for (const e of performance.getEntriesByType('resource')) {
+        add(e.name, e.initiatorType === 'video' || (/^(fetch|xmlhttprequest|other)$/.test(e.initiatorType) && e.decodedBodySize > 500_000));
+      }
+    } catch {}
+    return [...out];
+  }
+
   // 페이지 위쪽에 잠깐 떴다 사라지는 안내
   function toast(text) {
     const host = document.createElement('div');
@@ -331,7 +380,7 @@ if (!(() => { try { return typeof window.__tonicstream === 'function' && window.
   async function saveFromPage(v) {
     const src = /^https?:/.test(v.currentSrc) ? v.currentSrc : '';
     const cross = src && new URL(src).origin !== location.origin && !v.crossOrigin;
-    if (src && (cross || /\.(mp4|webm|mov)$/i.test(new URL(src).pathname))) { // 주소 뒤의 ?… #… 는 빼고 판단
+    if (src && (cross || /\.(mp4|m4v|webm|mov|ogv|mkv)$/i.test(new URL(src).pathname))) { // 주소 뒤의 ?… #… 는 빼고 판단
       const res = await tell({ type: 'save-video-url', url: src, title: document.title, thumb: thumbOf(v) });
       if (res?.ok) return { ok: true, text: '저장했습니다' };
       if (cross) return { ok: false, error: res?.error || '받기 실패' };
@@ -369,6 +418,7 @@ if (!(() => { try { return typeof window.__tonicstream === 'function' && window.
   addEventListener('scroll', hideHover, { passive: true, capture: true });
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (msg.type === 'scan') { sendResponse({ urls: scanPage() }); return; }
     if (msg.type === 'list') { sendResponse({ videos: list(), title: document.title }); return; }
     if (msg.type === 'record') {
       startRecording(msg.id, msg.fromStart, msg.title, msg.range)
