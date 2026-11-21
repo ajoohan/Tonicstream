@@ -218,10 +218,6 @@ if (!(() => { try { return typeof window.__tonicstream === 'function' && window.
 
     const bounded = fromStart || !!range; // 끝이 정해진 녹화: 되감기면 종료
     const startAt = range ? range.from : 0;
-    if (bounded && Math.abs(v.currentTime - startAt) > 0.2) {
-      v.currentTime = startAt;
-      await once(v, 'seeked', 3000);
-    }
     await v.play().catch(() => {});
 
     let source;
@@ -240,6 +236,11 @@ if (!(() => { try { return typeof window.__tonicstream === 'function' && window.
     await until(() => source.getAudioTracks().length > 0, hasSound() ? 2000 : 700);
     // 지금 있는 트랙만 담은 별도 스트림으로 녹화한다. 원래 스트림에 트랙이 더해지거나 빠져도 녹화기는 영향을 받지 않는다.
     const stream = new MediaStream([source.getVideoTracks()[0], ...source.getAudioTracks().slice(0, 1)]);
+    // 준비가 끝난 뒤에 시작 지점으로 옮긴다. 먼저 옮기고 기다리면 그동안 영상이 흘러가 앞부분이 잘린다.
+    if (bounded && Math.abs(v.currentTime - startAt) > 0.2) {
+      v.currentTime = startAt;
+      await once(v, 'seeked', 3000);
+    }
 
     const mimeType = pickMime();
     await loadSettings(); // 방금 바꾼 화질 설정도 반영
@@ -296,7 +297,8 @@ if (!(() => { try { return typeof window.__tonicstream === 'function' && window.
       if (adShowing()) { last = 0; return; } // 광고 중 시간 이동은 무시
       // 쇼츠/릴스/틱톡은 무한 반복 재생 → 끝에서 처음으로 돌아가면 한 바퀴 끝으로 보고 자동 종료.
       // 버퍼링 뒤 플레이어가 조금 뒤로 물러나거나 사용자가 살짝 되감는 것은 끝이 아니므로, 끝 근처에서 앞쪽으로 크게 돌아간 경우만 센다.
-      const looped = v.currentTime < last - 0.5 && (range ? v.currentTime < range.from - 0.3 || last >= range.to - 1
+      const rangeEnd = range ? Math.min(range.to, Number.isFinite(v.duration) ? v.duration : range.to) : 0; // 끝을 영상 끝으로 둔 경우 range.to는 길이보다 크다
+      const looped = v.currentTime < last - 0.5 && (range ? v.currentTime < range.from - 0.3 || last >= rangeEnd - 1
         : v.currentTime < 1.5 && (!Number.isFinite(v.duration) || last > v.duration - 2));
       if (bounded && looped) return stopRecording(id);
       if (range && v.currentTime >= range.to) return stopRecording(id);
