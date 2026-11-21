@@ -109,6 +109,7 @@ async function updateBadge(tabId) {
 // 배경이 잠들어 있다 깨어날 때는 "페이지가 바뀜" 신호가 "영상 파일 발견" 신호보다 늦게 도착할 수 있다.
 // 도착 순서로 지우면 새 페이지에서 방금 찾은 파일까지 지워지므로, 실제 발생 시각으로 판단한다.
 async function clearTab(tabId, before = Infinity) {
+  await streamTabsReady;
   if ((streamTabs.get(tabId) ?? Infinity) < before || before === Infinity) {
     if (streamTabs.delete(tabId)) chrome.storage.session.set({ streamTabs: [...streamTabs] });
   }
@@ -123,8 +124,10 @@ async function clearTab(tabId, before = Infinity) {
 
 // 조각 스트리밍을 쓰는 탭. 팝업이 "원본 파일이 없는 이유"를 알려 주는 데 쓴다.
 const streamTabs = new Map(); // 탭 → 스트리밍 목록 파일을 본 시각
-chrome.storage.session.get('streamTabs').then(r => (r.streamTabs || []).forEach(([t, ts]) => streamTabs.has(t) || streamTabs.set(t, ts)));
-function markStream(tabId, ts) {
+// 배경이 잠들었다 깨어난 직후에는 저장해 둔 값을 다 읽기 전일 수 있으므로, 쓰는 곳마다 이 약속(promise)을 기다린다
+const streamTabsReady = chrome.storage.session.get('streamTabs').then(r => (r.streamTabs || []).forEach(([t, ts]) => streamTabs.has(t) || streamTabs.set(t, ts)), () => {});
+async function markStream(tabId, ts) {
+  await streamTabsReady;
   if (streamTabs.has(tabId)) return;
   streamTabs.set(tabId, ts);
   chrome.storage.session.set({ streamTabs: [...streamTabs] });
@@ -139,7 +142,8 @@ async function probeOne(url) {
   let u;
   try { u = new URL(url); } catch { return null; }
   if (!/^https?:$/.test(u.protocol) || isSegmentUrl(u) || STREAM_EXT.test(u.pathname)) { probed.set(url, null); return null; }
-  const ask = init => fetch(url, { credentials: 'include', ...init }).then(r => {
+  // 페이지에 적힌 주소로 보내는 요청이므로 로그인 정보(쿠키)는 싣지 않는다
+  const ask = init => fetch(url, { credentials: 'omit', ...init }).then(r => {
     r.body?.cancel().catch(() => {});
     if (!r.ok) return null;
     const type = (r.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
@@ -149,6 +153,7 @@ async function probeOne(url) {
   }, () => null);
   // HEAD를 막는 서버가 많아, 안 되면 첫 1바이트만 받아 확인한다
   const info = (await ask({ method: 'HEAD' })) || (await ask({ headers: { Range: 'bytes=0-0' } }));
+  if (!info) return null; // 응답을 못 받은 경우는 기억하지 않아, 다음에 다시 물어볼 수 있게 한다
   const ok = info && looksLikeVideo(info.type, u, [{ name: 'content-disposition', value: info.disp }]) && !STREAM_TYPE.test(info.type)
     && !(info.size && info.size < 100 * 1024);
   const result = ok ? { type: /^video\//.test(info.type) ? info.type : 'video/mp4', size: info.size } : null;
@@ -182,7 +187,8 @@ chrome.tabs.onRemoved.addListener(tabId => { clearTab(tabId); setVideoRec(tabId,
 chrome.webRequest.onHeadersReceived.addListener(
   d => {
     if (d.tabId < 0 || d.frameId !== 0 || (d.documentLifecycle && d.documentLifecycle !== 'active')) return;
-    if (d.statusCode < 200 || d.statusCode >= 300 || d.statusCode === 204 || d.statusCode === 205) return;
+    // 오류 페이지(404·500 등)도 화면을 바꾸므로 비운다. 페이지가 안 바뀌는 것(이동 중인 3xx, 내용 없는 204·205)만 건너뛴다.
+    if (d.statusCode < 200 || (d.statusCode >= 300 && d.statusCode < 400) || d.statusCode === 204 || d.statusCode === 205) return;
     if (/attachment/i.test(header(d.responseHeaders, 'content-disposition'))) return;
     // zip·실행 파일처럼 화면에 열리지 않고 다운로드되는 형식도 페이지를 바꾸지 않는다
     const type = header(d.responseHeaders, 'content-type').split(';')[0].trim().toLowerCase();
@@ -238,14 +244,15 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         const bare = s => s.split('#')[0];
         const seen = (media[_sender.tab.id] || []).find(f => bare(f.url) === bare(msg.url));
         const byPath = u.pathname.match(VIDEO_EXT)?.[1].toLowerCase();
-        let ext = byPath || (seen && EXT_OF[seen.type]);
+        let ext = byPath || (seen && (EXT_OF[seen.type] || 'mp4')); // 이 탭에서 영상으로 확인된 주소면 형식 이름을 몰라도 받는다
         // 목록에 없는 주소(오래돼 밀려났거나 리다이렉트된 경우)는 서버에 파일 형식만 물어 확인한다
         if (!ext) {
           const typeOf = init => fetch(msg.url, { credentials: 'include', ...init })
             .then(r => { r.body?.cancel().catch(() => {}); return r.ok ? (r.headers.get('content-type') || '') : ''; }, () => '');
           // HEAD를 막는 서버가 많아, 안 되면 첫 1바이트만 받아 형식을 확인한다
           const type = (await typeOf({ method: 'HEAD' })) || (await typeOf({ headers: { Range: 'bytes=0-0' } }));
-          ext = EXT_OF[type.split(';')[0].trim().toLowerCase()];
+          const t = type.split(';')[0].trim().toLowerCase();
+          ext = EXT_OF[t] || (/^video\//.test(t) && !/^video\/(mp2t|iso\.segment)$/.test(t) ? 'mp4' : undefined);
         }
         if (!ext) throw new Error('영상 파일로 확인되지 않은 주소입니다.');
         return buildName(msg.title, _sender.tab.url, ext);
@@ -294,7 +301,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     probeMedia(msg.tabId, Array.isArray(msg.urls) ? msg.urls : []).then(n => sendResponse({ added: n }), () => sendResponse({ added: 0 }));
     return true;
   }
-  if (msg.type === 'has-stream') { sendResponse(streamTabs.has(msg.tabId)); return; }
+  if (msg.type === 'has-stream') { streamTabsReady.then(() => sendResponse(streamTabs.has(msg.tabId))); return true; }
   if (msg.type === 'download') {
     buildName(msg.title, msg.pageUrl, msg.ext)
       .then(async filename => {

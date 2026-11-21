@@ -86,10 +86,20 @@ async function start() {
       return;
     }
   }
-  const { tracks: audio, audioCtx } = mixAudio([...display.getAudioTracks(), ...(mic?.getAudioTracks() || [])]);
-  const stream = new MediaStream([video, ...audio]);
-  const mimeType = MIME_CANDIDATES.find(t => MediaRecorder.isTypeSupported(t)) || '';
-  const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: q.bits });
+  let audio, audioCtx, stream, mimeType, recorder;
+  try {
+    ({ tracks: audio, audioCtx } = mixAudio([...display.getAudioTracks(), ...(mic?.getAudioTracks() || [])]));
+    stream = new MediaStream([video, ...audio]);
+    mimeType = MIME_CANDIDATES.find(t => MediaRecorder.isTypeSupported(t)) || '';
+    recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: q.bits });
+  } catch (e) {
+    // 준비 도중 실패하면 화면 공유와 마이크를 풀고 처음 화면으로 돌아간다
+    [display, mic].forEach(s => s?.getTracks().forEach(t => t.stop()));
+    audioCtx?.close();
+    show('idle');
+    say(`녹화를 시작하지 못했습니다: ${e.message}`);
+    return;
+  }
   const chunks = [];
   const name = fileName();
   recorder.ondataavailable = e => e.data.size && chunks.push(e.data);
