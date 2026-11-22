@@ -121,6 +121,79 @@ if (!(() => { try { return typeof window.__tonicstream === 'function' && window.
     return [...out];
   }
 
+  // ── 페이지 전체 캡처 ──
+  // 한 화면씩 내려가며 찍어 세로로 이어 붙인다. 상세페이지·랜딩페이지를 한 장으로 저장할 때 쓴다.
+  // 화면에 고정된 메뉴(상단 바 등)는 첫 장에만 남기고 그다음부터는 숨겨, 장마다 반복해 찍히지 않게 한다.
+  let capturing = false;
+  async function capturePage(title) {
+    if (capturing) return { ok: false, error: '이미 캡처하는 중입니다.' };
+    capturing = true;
+    const root = document.scrollingElement || document.documentElement;
+    const startY = root.scrollTop;
+    const hidden = [];
+    const style = document.createElement('style');
+    style.textContent = 'html{scroll-behavior:auto!important}::-webkit-scrollbar{display:none!important}';
+    document.documentElement.appendChild(style);
+    if (bar) bar.style.display = 'none';
+    if (hb) hb.style.display = 'none';
+    try {
+      const vh = innerHeight, vw = innerWidth;
+      const full = Math.max(root.scrollHeight, vh);
+      const MAX_SHOTS = 40; // 너무 긴 페이지는 여기까지만
+      const total = Math.min(full, vh * MAX_SHOTS);
+      let canvas = null, ctx = null, scale = 1, shots = 0;
+      for (let y = 0; y < total; y += vh) {
+        const top = Math.min(y, Math.max(0, full - vh)); // 마지막 장은 바닥에 맞춘다
+        root.scrollTop = top;
+        await new Promise(r => setTimeout(r, shots ? 650 : 350)); // 늦게 뜨는 그림을 기다리고, 브라우저의 캡처 횟수 제한(초당 2회)도 지킨다
+        const res = await tell({ type: 'capture-visible' });
+        if (!res?.ok) throw new Error(res?.error || '화면을 찍지 못했습니다.');
+        const img = new Image();
+        img.src = res.dataUrl;
+        await img.decode();
+        if (!canvas) {
+          scale = img.width / vw;
+          // 브라우저가 다룰 수 있는 그림 높이에 한도가 있어, 넘으면 전체를 줄여 담는다
+          const k = Math.min(1, 30000 / (total * scale));
+          canvas = document.createElement('canvas');
+          canvas.width = Math.round(img.width * k); canvas.height = Math.round(total * scale * k);
+          ctx = canvas.getContext('2d');
+          scale *= k;
+          ctx.__k = k;
+        }
+        const drawTop = root.scrollTop; // 실제로 멈춘 위치 (요청한 곳과 다를 수 있다)
+        ctx.drawImage(img, 0, Math.round(drawTop * scale), canvas.width, Math.round(img.height * ctx.__k));
+        shots++;
+        if (shots === 1) {
+          for (const e of [...document.querySelectorAll('body *')].slice(0, 6000)) {
+            const pos = getComputedStyle(e).position;
+            if ((pos === 'fixed' || pos === 'sticky') && e.offsetHeight) { hidden.push([e, e.style.visibility]); e.style.setProperty('visibility', 'hidden', 'important'); }
+          }
+        }
+        if (top + vh >= total) break;
+      }
+      const blob = await new Promise((res, rej) => canvas.toBlob(b => b ? res(b) : rej(new Error('그림을 만들지 못했습니다.')), 'image/png'));
+      const url = URL.createObjectURL(blob);
+      setTimeout(() => URL.revokeObjectURL(url), 5 * 60_000);
+      // 보관함 미리보기: 맨 위 정사각형 부분
+      const t = document.createElement('canvas');
+      t.width = 240; t.height = 240;
+      t.getContext('2d').drawImage(canvas, 0, 0, canvas.width, Math.min(canvas.height, canvas.width), 0, 0, 240, 240 * Math.min(1, canvas.height / canvas.width));
+      const saved = await tell({ type: 'save-blob', url, title: title || document.title, ext: 'png', suffix: '전체', kind: '페이지 캡처', thumb: t.toDataURL('image/jpeg', 0.6) });
+      if (!saved?.ok) {
+        const a = Object.assign(document.createElement('a'), { href: url, download: `${safeName(title || document.title)} 전체.png` });
+        document.documentElement.appendChild(a); a.click(); a.remove();
+      }
+      return { ok: true, width: canvas.width, height: canvas.height, shots, cut: full > total };
+    } finally {
+      for (const [e, v] of hidden) { e.style.visibility = v; }
+      style.remove();
+      root.scrollTop = startY;
+      capturing = false;
+      tell({ type: 'capture-end' });
+    }
+  }
+
   // 페이지 위쪽에 잠깐 떴다 사라지는 안내
   function toast(text) {
     const host = document.createElement('div');
@@ -207,12 +280,13 @@ if (!(() => { try { return typeof window.__tonicstream === 'function' && window.
   };
   loadSettings();
 
-  async function startRecording(id, fromStart, title, range) {
+  // audioOnly: 화면 없이 소리만 녹음해 저장한다 (배경음악·내레이션용)
+  async function startRecording(id, fromStart, title, range, audioOnly) {
     if (recs.has(id) || starting.has(id)) return; // 버튼을 연달아 눌러도 한 번만 시작
     starting.add(id);
-    try { await beginRecording(id, fromStart, title, range); } finally { starting.delete(id); }
+    try { await beginRecording(id, fromStart, title, range, audioOnly); } finally { starting.delete(id); }
   }
-  async function beginRecording(id, fromStart, title, range) {
+  async function beginRecording(id, fromStart, title, range, audioOnly) {
     const v = findVideo(id);
     if (!v) throw new Error('영상을 찾을 수 없습니다. 창을 새로고침(↻) 해주세요.');
     if (adShowing()) {
@@ -238,18 +312,22 @@ if (!(() => { try { return typeof window.__tonicstream === 'function' && window.
     const hasSound = () => v.webkitAudioDecodedByteCount > 0 || v.mozHasAudio || (v.audioTracks && v.audioTracks.length > 0);
     await until(() => source.getAudioTracks().length > 0, hasSound() ? 2000 : 700);
     // 지금 있는 트랙만 담은 별도 스트림으로 녹화한다. 원래 스트림에 트랙이 더해지거나 빠져도 녹화기는 영향을 받지 않는다.
-    const stream = new MediaStream([source.getVideoTracks()[0], ...source.getAudioTracks().slice(0, 1)]);
+    if (audioOnly && !source.getAudioTracks().length) throw new Error('이 영상에는 소리가 없습니다.');
+    const stream = audioOnly ? new MediaStream(source.getAudioTracks().slice(0, 1))
+      : new MediaStream([source.getVideoTracks()[0], ...source.getAudioTracks().slice(0, 1)]);
     // 준비가 끝난 뒤에 시작 지점으로 옮긴다. 먼저 옮기고 기다리면 그동안 영상이 흘러가 앞부분이 잘린다.
     if (bounded && Math.abs(v.currentTime - startAt) > 0.2) {
       v.currentTime = startAt;
       await once(v, 'seeked', 3000);
     }
 
-    const mimeType = pickMime();
+    const AUDIO_MIMES = ['audio/mp4;codecs=mp4a.40.2', 'audio/mp4', 'audio/webm;codecs=opus', 'audio/webm'];
+    const mimeType = audioOnly ? AUDIO_MIMES.find(t => MediaRecorder.isTypeSupported(t)) || '' : pickMime();
     await loadSettings(); // 방금 바꾼 화질 설정도 반영
     let recorder;
     try {
-      recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: BITS[settings.quality] || BITS.high });
+      recorder = new MediaRecorder(stream, audioOnly ? { mimeType, audioBitsPerSecond: 192_000 }
+        : { mimeType, videoBitsPerSecond: BITS[settings.quality] || BITS.high });
       recorder.start(1000);
     } catch (e) {
       throw new Error(e.name === 'SecurityError'
@@ -264,7 +342,7 @@ if (!(() => { try { return typeof window.__tonicstream === 'function' && window.
       stopRecording(id);
     };
     // 영상 트랙이 끊기면(영상이 바뀜 등) 더 받을 화면이 없으므로 여기까지 저장
-    stream.getVideoTracks()[0].addEventListener('ended', () => stopRecording(id));
+    stream.getTracks()[0].addEventListener('ended', () => stopRecording(id));
 
     // 화면이 실제로 나아가고 있을 때만 녹화한다. 아래 경우에는 녹화를 쉬었다가 다시 이어 붙인다.
     //  - 사용자가 멈춤 / 유튜브 광고
@@ -329,13 +407,13 @@ if (!(() => { try { return typeof window.__tonicstream === 'function' && window.
       cleanup();
       if (!chunks.length) return toast('녹화된 내용이 없습니다. 영상이 재생되는 상태에서 다시 시도해 주세요.');
       const type = recorder.mimeType || mimeType || 'video/webm';
-      const ext = type.includes('mp4') ? 'mp4' : 'webm';
+      const ext = audioOnly ? (type.includes('mp4') ? 'm4a' : 'weba') : type.includes('mp4') ? 'mp4' : 'webm';
       const url = URL.createObjectURL(new Blob(chunks, { type }));
       const filename = `${safeName(title || document.title)}.${ext}`; // 예비 저장용 이름
       // 자동 종료(영상 끝·한 바퀴 재생)는 클릭 없이 저장되므로, 다른 도메인·샌드박스 프레임에서도
       // 막히지 않는 브라우저 다운로드 기능으로 저장한다. 실패하면 링크 클릭으로 한 번 더 시도.
       const res = await tell({ type: 'save-blob', url, title: title || document.title, ext,
-        kind: range ? '구간 녹화' : '영상 녹화', thumb: thumb || thumbOf(v) });
+        kind: audioOnly ? '소리 저장' : range ? '구간 녹화' : '영상 녹화', thumb: thumb || thumbOf(v) });
       if (!res?.ok) {
         const a = Object.assign(document.createElement('a'), { href: url, download: filename });
         document.documentElement.appendChild(a);
@@ -468,10 +546,15 @@ if (!(() => { try { return typeof window.__tonicstream === 'function' && window.
   addEventListener('scroll', hideHover, { passive: true, capture: true });
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (msg.type === 'capture-page') {
+      if (window !== top) return;
+      capturePage(msg.title).then(sendResponse, e => sendResponse({ ok: false, error: e.message }));
+      return true;
+    }
     if (msg.type === 'scan') { sendResponse({ urls: scanPage() }); return; }
     if (msg.type === 'list') { sendResponse({ videos: list(), title: document.title }); return; }
     if (msg.type === 'record') {
-      startRecording(msg.id, msg.fromStart, msg.title, msg.range)
+      startRecording(msg.id, msg.fromStart, msg.title, msg.range, msg.audioOnly)
         .then(() => sendResponse({ ok: true }))
         .catch(e => sendResponse({ ok: false, error: e.message }));
       return true;
