@@ -108,7 +108,7 @@ footer a { text-decoration: none; display: inline-flex; align-items: center; min
     <h1>보고 있는 영상,<br><em>MP4</em>로 저장.</h1>
     <p class="lead">쇼츠 · 릴스 · 틱톡부터 화면 녹화까지, 클릭 한 번이면 끝.</p>
     <a class="btn" href="tonicstream-extension.zip" download>무료 다운로드</a>
-    <p class="meta">Edge · Chrome 확장 프로그램 · v0.9.2</p>
+    <p class="meta">Edge · Chrome 확장 프로그램 · v0.9.3</p>
   </section>
 
   <section class="wrap">
@@ -120,15 +120,14 @@ footer a { text-decoration: none; display: inline-flex; align-items: center; min
         // (<source media>를 무시하는 브라우저가 있어 여기서 직접 정한다)
         (function () {
           var v = document.getElementById('reel'), mq = matchMedia('(max-width: 720px)');
-          var first = true;
           function pick() {
-            var m = mq.matches, was = !v.paused;
-            // 방문자가 멈춰 둔 상태에서 화면을 돌리면 다시 재생되지 않게 한다 (처음 한 번만 자동 재생)
-            if (!first && !was) v.autoplay = false;
-            first = false;
+            var m = mq.matches;
+            // 방문자가 직접 멈춘 경우에만 멈춘 상태를 지킨다. (아직 재생이 시작되지 않은 것을 "멈춤"으로 오해하지 않게, 버튼을 누른 사실로 판단)
+            var userPaused = v.dataset.userPaused === '1';
+            v.autoplay = !userPaused;
             v.poster = m ? 'assets/promo-mobile-poster.jpg' : 'assets/promo-poster.jpg';
             v.src = m ? 'assets/promo-mobile.mp4' : 'assets/promo.mp4';
-            if (was) v.play().catch(function () {});
+            if (!userPaused && !matchMedia('(prefers-reduced-motion: reduce)').matches) v.play().catch(function () {});
           }
           pick();
           // 휴대폰을 돌리거나 창 폭을 바꾸면 영상 틀의 비율도 바뀌므로 그에 맞는 영상으로 바꾼다
@@ -170,7 +169,7 @@ footer a { text-decoration: none; display: inline-flex; align-items: center; min
       <li><span>처음 설치한 <b>같은 폴더에 덮어쓰기</b></span></li>
       <li><span><code>edge://extensions</code>에서 Tonicstream의 <b>새로 고침(↻)</b> 누르기</span></li>
     </ol>
-    <a class="btn" href="tonicstream-extension.zip" download>최신 버전 다운로드 · v0.9.2</a>
+    <a class="btn" href="tonicstream-extension.zip" download>최신 버전 다운로드 · v0.9.3</a>
     <p class="meta">새 버전이 나오면 확장 팝업 맨 위에 알림이 뜹니다. (0.8.2 버전부터)</p>
   </section>
 </main>
@@ -187,13 +186,13 @@ footer a { text-decoration: none; display: inline-flex; align-items: center; min
     var v = document.getElementById('reel'), btn = document.getElementById('reel-toggle');
     if (!v) return;
     // "동작 줄이기"를 켠 사용자에게는 자동으로 틀지 않는다
-    if (matchMedia('(prefers-reduced-motion: reduce)').matches) { v.removeAttribute('autoplay'); v.pause(); }
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) { v.removeAttribute('autoplay'); v.dataset.userPaused = '1'; v.pause(); }
     // 일시정지·재생 버튼 (반복 영상을 멈출 수 있게)
     function sync() {
       btn.textContent = v.paused ? '▶' : '❚❚';
       btn.setAttribute('aria-label', v.paused ? '영상 재생' : '영상 일시정지');
     }
-    btn.addEventListener('click', function () { if (v.paused) v.play(); else v.pause(); });
+    btn.addEventListener('click', function () { if (v.paused) { v.dataset.userPaused = ''; v.play(); } else { v.dataset.userPaused = '1'; v.pause(); } });
     v.addEventListener('play', sync); v.addEventListener('pause', sync); sync();
   })();
 </script>

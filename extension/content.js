@@ -56,7 +56,8 @@ if (!(() => { try { return typeof window.__tonicstream === 'function' && window.
           area: Math.round(r.width * r.height),
           playing: !v.paused,
           time: v.currentTime || 0,
-          directSrc: /^https?:/.test(v.currentSrc) ? v.currentSrc : null,
+          // 스트리밍 목록(.m3u8·.mpd)은 영상 파일이 아니라 조각 목록이므로 바로 받기 대상이 아니다
+          directSrc: /^https?:/.test(v.currentSrc) && !/\.(m3u8|mpd)(\?|#|$)/i.test(v.currentSrc) ? v.currentSrc : null,
           // 다른 도메인에서 직접 불러온 영상(틱톡 등)은 브라우저가 녹화를 막음 → 원본 다운로드로 처리
           crossOrigin: /^https?:/.test(v.currentSrc) && new URL(v.currentSrc).origin !== location.origin && !v.crossOrigin,
           recording: !!rec,
@@ -191,6 +192,8 @@ if (!(() => { try { return typeof window.__tonicstream === 'function' && window.
   }
   // 페이지를 떠나면 녹화도 끝나므로 툴바 아이콘 상태를 되돌린다
   addEventListener('pagehide', () => { if (recs.size) tell({ type: 'videorec-state', recording: false }); });
+  // 녹화 중에 페이지를 닫거나 이동하면 녹화본이 사라진다. 브라우저의 "나가시겠습니까?" 확인을 띄운다.
+  addEventListener('beforeunload', e => { if (recs.size && alive()) { e.preventDefault(); e.returnValue = ''; } });
 
   // 저장 설정(화질, 저장 버튼 표시)을 읽어 두고 바뀌면 따라간다. 값의 뜻은 naming.js 참고.
   const BITS = { high: 8_000_000, medium: 4_000_000, small: 1_500_000 };

@@ -42,7 +42,14 @@ function mixAudio(tracks) {
   return { tracks: dest.stream.getAudioTracks(), audioCtx };
 }
 
+let starting = false;
 async function start() {
+  if (starting || rec) return; // 버튼을 연달아 눌러도 녹화는 하나만
+  starting = true;
+  $('#start').disabled = true;
+  try { await begin(); } finally { starting = false; $('#start').disabled = false; }
+}
+async function begin() {
   say('');
   // 화면 선택 창이 잘리지 않게, 창이 작아져 있으면 먼저 키운다
   if (myWindowId != null) {
@@ -242,6 +249,8 @@ async function finish(chunks, type, name, thumbP, incognito) {
   } catch (e) {
     $('#saved').textContent = `저장하지 못했습니다: ${e.message}`;
   }
+  // 이 창을 일반 창에서 다시 쓰는 경우 시크릿 표시가 남아 있지 않게 되돌린다 (다음 녹화가 보관함에서 빠지지 않게)
+  chrome.storage.session.set({ screenRecIncognito: false });
   URL.revokeObjectURL(url); // 저장이 끝났으니 녹화 데이터를 메모리에서 놓아 준다 ("다시 녹화"를 반복해도 쌓이지 않게)
   saving = false;
   $('#again').disabled = $('#close').disabled = false;
