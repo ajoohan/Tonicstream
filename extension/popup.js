@@ -48,6 +48,7 @@ async function send(frameId, msg) {
   const res = await chrome.tabs.sendMessage(tab.id, msg, { frameId }).catch(e => ({ ok: false, error: e.message }));
   if (res && !res.ok) say(`${res.error} → 아래 "탭 녹화"를 이용해 보세요.`);
   else if (msg.type === 'record' && msg.range) say(`${fmtTime(msg.range.from)}~${fmtTime(Math.min(msg.range.to, msg.duration ?? msg.range.to))} 구간을 녹화합니다. 끝 지점에서 자동으로 저장됩니다.`);
+  else if (msg.type === 'record' && msg.audioOnly) say('소리 녹음을 시작했습니다. 영상이 끝나면 자동으로 저장되고, 페이지 위의 "정지 후 저장"으로 먼저 끝낼 수도 있습니다.');
   else if (msg.type === 'record') say('녹화를 시작했습니다. 페이지 위의 "정지 후 저장" 또는 툴바의 Tonicstream 아이콘을 누르면 바로 저장됩니다.');
   setTimeout(render, 300);
 }
@@ -80,6 +81,10 @@ function videoCard(v, i) {
     }
   }
   row.append(el('button', { textContent: '장면 캡처', title: '지금 보이는 장면을 PNG 이미지로 저장', onclick: () => snapshot(v) }));
+  if (!v.recording && !(v.crossOrigin && v.directSrc)) {
+    row.append(el('button', { textContent: '소리만 저장', title: '화면 없이 소리만 녹음해 저장 (배경음악·내레이션)',
+      onclick: () => send(v.frameId, { type: 'record', id: v.id, fromStart: v.duration != null, title: tab.title, audioOnly: true }) }));
+  }
   return el('div', { className: 'card' }, el('div', { className: 'meta', textContent: info }), row, form);
 }
 
@@ -144,24 +149,63 @@ async function scanForFiles() {
   if (res?.added) renderFiles();
 }
 
+// 스트리밍(HLS) 영상 카드: 조각을 모두 받아 MP4 한 개로 합쳐 저장한다
+function streamCard(stream) {
+  const job = stream.job && stream.job.tabId === tab.id ? stream.job : null;
+  const row = el('div', { className: 'row' });
+  let info = '영상을 조각으로 나눠 보내는 방식입니다. 조각을 모두 받아 MP4 한 개로 합칩니다.';
+  if (job?.state === 'running') {
+    const pct = job.total ? Math.round(job.done / job.total * 100) : 0;
+    info = job.total ? `받는 중 ${pct}% · ${job.done}/${job.total}조각 · ${fmtSize(job.bytes)}` : '준비 중…';
+    row.append(el('span', { className: 'rec', textContent: `⬇ ${pct}%` }),
+      el('button', { textContent: '취소', onclick: async () => { await chrome.runtime.sendMessage({ type: 'hls-cancel' }); setTimeout(renderFiles, 600); } }));
+  } else {
+    if (job?.state === 'done') info = `저장했습니다 · ${fmtSize(job.size)}${job.quality ? ' · ' + job.quality : ''} · ${fmtTime(job.seconds)}`;
+    if (job?.state === 'error') info = `받지 못했습니다: ${job.error}`;
+    row.append(el('button', { className: 'primary', textContent: job?.state === 'done' ? '다시 받기' : '스트리밍 영상 받기', onclick: async () => {
+      const res = await chrome.runtime.sendMessage({ type: 'hls-start', tabId: tab.id, title: tab.title, pageUrl: tab.url });
+      if (!res?.ok) say(res?.error || '시작하지 못했습니다.');
+      renderFiles();
+    } }));
+  }
+  return el('div', { className: 'card stream' }, el('div', { className: 'meta', textContent: `스트리밍 영상 (HLS) · ${info}` }), row);
+}
+
+let filesTimer = null;
 // "바로 다운로드" 목록 그리기
-async function renderFiles(files, hasStream) {
+async function renderFiles(files, stream) {
   if (files === undefined) {
-    [files, hasStream] = await Promise.all([
+    [files, stream] = await Promise.all([
       chrome.runtime.sendMessage({ type: 'getMedia', tabId: tab.id }),
-      chrome.runtime.sendMessage({ type: 'has-stream', tabId: tab.id }).catch(() => false),
+      chrome.runtime.sendMessage({ type: 'get-stream', tabId: tab.id }).catch(() => null),
     ]);
   }
+  const hasStream = !!stream?.any;
   // 뒤로 가기 등으로 다른 페이지의 파일이 남아 있으면 지금 페이지 것만 보여준다
   const mine = (files || []).filter(f => !f.documentId || !docIds.size || docIds.has(f.documentId))
     .sort((a, b) => (b.size || 0) - (a.size || 0)); // 큰 파일(보통 고화질)부터
   const none = hasStream
-    ? '이 페이지는 영상을 조각으로 나눠 보내는 스트리밍 방식이라 원본 파일이 따로 없습니다. 위의 "화면 녹화 저장"을 이용하세요.'
+    ? '이 페이지는 영상을 조각으로 나눠 보내는 스트리밍 방식(DASH)이라 아직 파일로 받을 수 없습니다. 위의 "화면 녹화 저장"을 이용하세요.'
     : '감지된 원본 파일이 없습니다. 영상을 한 번 재생하면 잡히는 경우가 많습니다.';
-  $('#files').replaceChildren(...(mine.length ? mine.map(fileCard) : [el('p', { className: 'empty', textContent: none })]));
+  const cards = mine.map(fileCard);
+  // 파일이 여러 개면 한 번에 받기. 이름이 겹치지 않게 번호를 붙인다.
+  if (mine.length > 1) {
+    cards.unshift(el('div', { className: 'row all' }, el('button', { textContent: `모두 받기 (${mine.length}개)`, onclick: async e => {
+      e.target.disabled = true;
+      let ok = 0;
+      for (const [i, f] of mine.entries()) { if (await download(f.url, f.type, null, String(i + 1).padStart(2, '0'))) ok++; }
+      say(`${mine.length}개 중 ${ok}개 다운로드를 시작했습니다.`);
+      e.target.disabled = false;
+    } })));
+  }
+  if (stream?.hls?.length) cards.unshift(streamCard(stream));
+  $('#files').replaceChildren(...(cards.length ? cards : [el('p', { className: 'empty', textContent: none })]));
+  // 스트리밍을 받는 동안에는 진행률이 보이도록 이 목록만 주기적으로 다시 그린다
+  clearTimeout(filesTimer);
+  if (stream?.job?.state === 'running' && stream.job.tabId === tab.id) filesTimer = setTimeout(() => (pressing ? null : renderFiles()), 700);
 }
 
-async function download(url, type = '', v = null) {
+async function download(url, type = '', v = null, suffix = '') {
   // 보관함 미리보기용 그림 (꺼낼 수 없는 영상이면 빈 값)
   const thumb = v ? (await chrome.tabs.sendMessage(tab.id, { type: 'thumb', id: v.id }, { frameId: v.frameId }).catch(() => null))?.thumb || '' : '';
   // 주소의 확장자를 먼저 보고, 없으면 파일 형식(video/webm 등)으로 정한다
@@ -169,8 +213,9 @@ async function download(url, type = '', v = null) {
   try { fromUrl = new URL(url).pathname.match(/\.(mp4|m4v|webm|mov|ogv|mkv)$/i)?.[1].toLowerCase() || ''; } catch {}
   const fromType = { 'video/webm': 'webm', 'video/quicktime': 'mov', 'video/mp4': 'mp4', 'video/x-m4v': 'm4v', 'video/ogg': 'ogv', 'video/x-matroska': 'mkv' }[type.split(';')[0]] || '';
   const ext = fromUrl || fromType || 'mp4';
-  const res = await chrome.runtime.sendMessage({ type: 'download', url, title: tab.title, pageUrl: tab.url, ext, thumb, incognito: tab.incognito });
+  const res = await chrome.runtime.sendMessage({ type: 'download', url, title: tab.title, pageUrl: tab.url, ext, thumb, incognito: tab.incognito, suffix });
   say(res?.ok ? '다운로드를 시작했습니다.' : `다운로드 실패: ${res?.error || ''} → "탭 녹화"를 이용해 보세요.`);
+  return !!res?.ok;
 }
 
 async function startTabRec() {
@@ -257,7 +302,7 @@ async function render() {
     frameVideos(),
     chrome.runtime.sendMessage({ type: 'getMedia', tabId: tab.id }),
     chrome.runtime.sendMessage({ type: 'tabrec-status' }),
-    chrome.runtime.sendMessage({ type: 'has-stream', tabId: tab.id }).catch(() => false),
+    chrome.runtime.sendMessage({ type: 'get-stream', tabId: tab.id }).catch(() => null),
   ]);
   renderTabRec(rec);
   $('#videos').replaceChildren(...videoList(videos));
@@ -345,6 +390,15 @@ async function checkUpdate() {
   [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   initNaming();
   checkUpdate();
+  $('#pagecap').onclick = async () => {
+    if (!tab?.id || !/^https?:|^file:/.test(tab.url || '')) return say('이 페이지에서는 캡처할 수 없습니다.');
+    $('#pagecap').disabled = true;
+    say('페이지를 캡처하는 중입니다. 끝날 때까지 탭을 그대로 두세요…');
+    await chrome.runtime.sendMessage({ type: 'capture-start', tabId: tab.id });
+    const res = await chrome.tabs.sendMessage(tab.id, { type: 'capture-page', title: tab.title }, { frameId: 0 }).catch(e => ({ ok: false, error: e.message }));
+    say(res?.ok ? `페이지를 저장했습니다. (${res.width}×${res.height}${res.cut ? ', 너무 길어 앞부분만' : ''})` : `캡처 실패: ${res?.error || ''}`);
+    $('#pagecap').disabled = false;
+  };
   $('#library').onclick = () => { chrome.tabs.create({ url: 'library.html' }); window.close(); };
   if (!tab?.id || !/^https?:|^file:/.test(tab.url || '')) {
     // 새 탭·설정 화면 등에서는 화면 녹화만 쓸 수 있다
