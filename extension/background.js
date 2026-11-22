@@ -46,7 +46,8 @@ const STREAM_EXT = /\.(m3u8|mpd)$/i;
 
 function looksLikeVideo(type, url, headers) {
   if (/^video\//.test(type)) return !/^video\/(mp2t|iso\.segment|vnd\.dlna\.mpeg-tts)$/.test(type); // TS 조각 제외
-  if (VIDEO_EXT.test(url.pathname)) return true;
+  // 주소가 .mp4로 끝나도 서버가 웹 문서 등 다른 형식이라고 알려 주면 영상이 아니다 (파일 보기 페이지 등)
+  if (VIDEO_EXT.test(url.pathname)) return !/^(text|image|font)\/|^application\/(json|xml|xhtml\+xml|javascript|pdf)$|\+(xml|json)$/.test(type);
   // 형식을 "일반 파일"로만 알려 주는 서버: 내려받을 파일 이름이 영상이면 영상으로 본다
   return /octet-stream/.test(type) && /filename[^;]*\.(mp4|m4v|webm|mov|ogv|mkv)/i.test(header(headers, 'content-disposition'));
 }
@@ -161,17 +162,19 @@ async function probeOne(url) {
   probed.set(url, result);
   return result;
 }
-async function probeMedia(tabId, urls) {
+async function probeMedia(tabId, items) {
   const media = await load();
   const known = new Set((media[tabId] || []).map(m => m.url.split('#')[0]));
-  const fresh = [...new Set(urls.map(u => String(u).split('#')[0]))].filter(u => !known.has(u)).slice(0, 12);
+  const docOf = new Map(items.map(x => [String(x.url).split('#')[0], String(x.documentId || '')]));
+  // 이미 "영상 아님"으로 확인된 주소는 빼고 고른다. 그러지 않으면 그것들이 한도(12개)를 차지해 뒤쪽 진짜 영상을 영영 확인하지 못한다.
+  const fresh = [...docOf.keys()].filter(u => !known.has(u) && probed.get(u) !== null).slice(0, 12);
   const results = await Promise.all(fresh.map(async url => ({ url, info: await probeOne(url) })));
   const found = results.filter(r => r.info);
   if (!found.length) return 0;
   const now = await load();
   const list = (now[tabId] ||= []);
   for (const { url, info } of found) {
-    if (!list.some(m => m.url.split('#')[0] === url)) list.push({ url, type: info.type, size: info.size, ts: Date.now(), documentId: '', found: true });
+    if (!list.some(m => m.url.split('#')[0] === url)) list.push({ url, type: info.type, size: info.size, ts: Date.now(), documentId: docOf.get(url) || '', found: true });
   }
   list.length = Math.min(list.length, MAX_PER_TAB);
   save(now);
@@ -298,11 +301,14 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true;
   }
   if (msg.type === 'probe-media') {
-    probeMedia(msg.tabId, Array.isArray(msg.urls) ? msg.urls : []).then(n => sendResponse({ added: n }), () => sendResponse({ added: 0 }));
+    probeMedia(msg.tabId, Array.isArray(msg.items) ? msg.items.filter(x => x && typeof x.url === 'string') : []).then(n => sendResponse({ added: n }), () => sendResponse({ added: 0 }));
     return true;
   }
   if (msg.type === 'has-stream') { streamTabsReady.then(() => sendResponse(streamTabs.has(msg.tabId))); return true; }
   if (msg.type === 'download') {
+    let path = '';
+    try { path = new URL(msg.url).pathname; } catch {}
+    if (STREAM_EXT.test(path)) { sendResponse({ ok: false, error: '스트리밍 방식 영상이라 파일로 받을 수 없습니다.' }); return; }
     buildName(msg.title, msg.pageUrl, msg.ext)
       .then(async filename => {
         const id = await download(msg.url, filename);

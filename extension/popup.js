@@ -14,20 +14,31 @@ function el(tag, props = {}, ...kids) {
 let frameIds = null;
 
 let docIds = new Set(); // 지금 페이지를 이루는 문서들
+let frameDocs = new Map(); // 프레임 → 문서 ID
 async function frameVideos() {
   // 창을 열 때 한 번만 content.js를 모든 프레임에 주입(이미 있으면 무시)하고, 이후엔 목록만 다시 요청
+  let frames = frameIds;
   if (!frameIds || $('#refresh').dataset.force) {
     delete $('#refresh').dataset.force;
-    const injected = await chrome.scripting.executeScript({
-      target: { tabId: tab.id, allFrames: true }, files: ['content.js'],
-    }).catch(() => []);
-    frameIds = injected.map(r => r.frameId);
-    docIds = new Set(injected.map(r => r.documentId).filter(Boolean));
-    // 주입이 막힌 경우에도 매니페스트로 이미 들어가 있는 맨 위 프레임에는 물어본다
-    if (!frameIds.length) frameIds = [0];
+    // 페이지나 광고 프레임이 아직 로딩 중이면 주입이 한참 걸릴 수 있다. 바로 주입을 시도하고(injectImmediately),
+    // 그래도 1.5초 안에 끝나지 않으면 이번에는 맨 위 프레임만 보고 다음 번에 다시 시도한다. (팝업이 "불러오는 중"에 멈추지 않게)
+    const injected = await Promise.race([
+      chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, files: ['content.js'], injectImmediately: true }).catch(() => []),
+      new Promise(r => setTimeout(() => r(null), 1500)),
+    ]);
+    if (injected) {
+      frameIds = injected.map(r => r.frameId);
+      docIds = new Set(injected.map(r => r.documentId).filter(Boolean));
+      frameDocs = new Map(injected.map(r => [r.frameId, r.documentId || '']));
+      // 주입이 막힌 경우에도 매니페스트로 이미 들어가 있는 맨 위 프레임에는 물어본다
+      if (!frameIds.length) frameIds = [0];
+    }
+    frames = frameIds || [0];
   }
-  const replies = await Promise.all(frameIds.map(frameId =>
-    chrome.tabs.sendMessage(tab.id, { type: 'list' }, { frameId }).then(res => ({ res, frameId }), () => null)));
+  const replies = await Promise.all(frames.map(frameId => Promise.race([
+    chrome.tabs.sendMessage(tab.id, { type: 'list' }, { frameId }).then(res => ({ res, frameId }), () => null),
+    new Promise(r => setTimeout(() => r(null), 1500)), // 응답 없는 프레임 하나 때문에 전체가 멈추지 않게
+  ])));
   const out = [];
   for (const r of replies) for (const v of r?.res?.videos || []) out.push({ ...v, frameId: r.frameId });
   return out.sort((a, b) => b.recording - a.recording || b.active - a.active || b.area - a.area);
@@ -122,11 +133,32 @@ function fileCard(f, i, all) {
 // 페이지 안에 적혀 있는 영상 주소를 찾아(아직 재생하지 않은 영상 등) 목록에 더한다. 팝업을 열 때와 새로고침 때 한 번씩.
 async function scanForFiles() {
   const replies = await Promise.all((frameIds || [0]).map(frameId =>
-    chrome.tabs.sendMessage(tab.id, { type: 'scan' }, { frameId }).catch(() => null)));
-  const urls = [...new Set(replies.flatMap(r => r?.urls || []))];
-  if (!urls.length) return;
-  const res = await chrome.runtime.sendMessage({ type: 'probe-media', tabId: tab.id, urls }).catch(() => null);
-  if (res?.added) render();
+    chrome.tabs.sendMessage(tab.id, { type: 'scan' }, { frameId }).then(r => ({ r, frameId }), () => null)));
+  const seen = new Set(), items = [];
+  for (const x of replies) for (const url of x?.r?.urls || []) {
+    if (!seen.has(url)) { seen.add(url); items.push({ url, documentId: frameDocs.get(x.frameId) || '' }); }
+  }
+  if (!items.length) return;
+  const res = await chrome.runtime.sendMessage({ type: 'probe-media', tabId: tab.id, items }).catch(() => null);
+  // 파일 목록만 다시 그린다. 전체를 다시 그리면 그사이 열어 둔 구간 입력칸이 닫히고 누르던 버튼이 사라진다.
+  if (res?.added) renderFiles();
+}
+
+// "바로 다운로드" 목록 그리기
+async function renderFiles(files, hasStream) {
+  if (files === undefined) {
+    [files, hasStream] = await Promise.all([
+      chrome.runtime.sendMessage({ type: 'getMedia', tabId: tab.id }),
+      chrome.runtime.sendMessage({ type: 'has-stream', tabId: tab.id }).catch(() => false),
+    ]);
+  }
+  // 뒤로 가기 등으로 다른 페이지의 파일이 남아 있으면 지금 페이지 것만 보여준다
+  const mine = (files || []).filter(f => !f.documentId || !docIds.size || docIds.has(f.documentId))
+    .sort((a, b) => (b.size || 0) - (a.size || 0)); // 큰 파일(보통 고화질)부터
+  const none = hasStream
+    ? '이 페이지는 영상을 조각으로 나눠 보내는 스트리밍 방식이라 원본 파일이 따로 없습니다. 위의 "화면 녹화 저장"을 이용하세요.'
+    : '감지된 원본 파일이 없습니다. 영상을 한 번 재생하면 잡히는 경우가 많습니다.';
+  $('#files').replaceChildren(...(mine.length ? mine.map(fileCard) : [el('p', { className: 'empty', textContent: none })]));
 }
 
 async function download(url, type = '', v = null) {
@@ -229,13 +261,7 @@ async function render() {
   ]);
   renderTabRec(rec);
   $('#videos').replaceChildren(...videoList(videos));
-  // 뒤로 가기 등으로 다른 페이지의 파일이 남아 있으면 지금 페이지 것만 보여준다
-  const mine = (files || []).filter(f => !f.documentId || !docIds.size || docIds.has(f.documentId))
-    .sort((a, b) => (b.size || 0) - (a.size || 0)); // 큰 파일(보통 고화질)부터
-  const none = hasStream
-    ? '이 페이지는 영상을 조각으로 나눠 보내는 스트리밍 방식이라 원본 파일이 따로 없습니다. 위의 "화면 녹화 저장"을 이용하세요.'
-    : '감지된 원본 파일이 없습니다. 영상을 한 번 재생하면 잡히는 경우가 많습니다.';
-  $('#files').replaceChildren(...(mine.length ? mine.map(fileCard) : [el('p', { className: 'empty', textContent: none })]));
+  renderFiles(files, hasStream);
 }
 
 // ── 저장 설정 (폴더·파일 이름 규칙) ──
