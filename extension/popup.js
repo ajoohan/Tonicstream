@@ -151,7 +151,9 @@ async function scanForFiles() {
 
 // 스트리밍(HLS) 영상 카드: 조각을 모두 받아 MP4 한 개로 합쳐 저장한다
 function streamCard(stream) {
-  const job = stream.job && stream.job.tabId === tab.id ? stream.job : null;
+  // 받는 중인 작업은 이 탭 것이면 보여 주고, 끝난 결과(저장함·실패)는 같은 페이지일 때만 보여 준다
+  const mine = stream.job && stream.job.tabId === tab.id && (stream.job.state === 'running' || stream.job.pageUrl === tab.url);
+  const job = mine ? stream.job : null;
   const row = el('div', { className: 'row' });
   let info = '영상을 조각으로 나눠 보내는 방식입니다. 조각을 모두 받아 MP4 한 개로 합칩니다.';
   if (job?.state === 'running') {
@@ -162,8 +164,10 @@ function streamCard(stream) {
   } else {
     if (job?.state === 'done') info = `저장했습니다 · ${fmtSize(job.size)}${job.quality ? ' · ' + job.quality : ''} · ${fmtTime(job.seconds)}`;
     if (job?.state === 'error') info = `받지 못했습니다: ${job.error}`;
-    row.append(el('button', { className: 'primary', textContent: job?.state === 'done' ? '다시 받기' : '스트리밍 영상 받기', onclick: async () => {
-      const res = await chrome.runtime.sendMessage({ type: 'hls-start', tabId: tab.id, title: tab.title, pageUrl: tab.url });
+    row.append(el('button', { className: 'primary', textContent: job?.state === 'done' ? '다시 받기' : '스트리밍 영상 받기', onclick: async e => {
+      e.target.disabled = true; // 연달아 눌러도 한 번만
+      // 한 탭에서 영상을 여러 개 봤으면 조각 목록도 여러 개다. 지금 보는 영상의 길이를 알려 주어 맞는 것을 고르게 한다.
+      const res = await chrome.runtime.sendMessage({ type: 'hls-start', tabId: tab.id, title: tab.title, pageUrl: tab.url, hint: mainDuration });
       if (!res?.ok) say(res?.error || '시작하지 못했습니다.');
       renderFiles();
     } }));
@@ -172,6 +176,7 @@ function streamCard(stream) {
 }
 
 let filesTimer = null;
+let mainDuration = 0; // 지금 보는 영상의 길이(초). 모르면 0
 // "바로 다운로드" 목록 그리기
 async function renderFiles(files, stream) {
   if (files === undefined) {
@@ -305,6 +310,8 @@ async function render() {
     chrome.runtime.sendMessage({ type: 'get-stream', tabId: tab.id }).catch(() => null),
   ]);
   renderTabRec(rec);
+  // 목록의 맨 앞이 지금 보는 영상이다 (녹화 중 > 재생 중 > 큰 것 순)
+  mainDuration = videos.find(v => v.duration > 0 && Number.isFinite(v.duration))?.duration || 0;
   $('#videos').replaceChildren(...videoList(videos));
   renderFiles(files, hasStream);
 }
@@ -396,6 +403,7 @@ async function checkUpdate() {
     say('페이지를 캡처하는 중입니다. 끝날 때까지 탭을 그대로 두세요…');
     await chrome.runtime.sendMessage({ type: 'capture-start', tabId: tab.id });
     const res = await chrome.tabs.sendMessage(tab.id, { type: 'capture-page', title: tab.title }, { frameId: 0 }).catch(e => ({ ok: false, error: e.message }));
+    if (!res?.ok) chrome.runtime.sendMessage({ type: 'capture-end', tabId: tab.id }).catch(() => {}); // 페이지가 응답하지 못한 경우에도 캡처 허용을 거둔다
     say(res?.ok ? `페이지를 저장했습니다. (${res.width}×${res.height}${res.cut ? ', 너무 길어 앞부분만' : ''})` : `캡처 실패: ${res?.error || ''}`);
     $('#pagecap').disabled = false;
   };

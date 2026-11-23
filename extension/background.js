@@ -41,7 +41,7 @@ function totalSize(headers) {
 const VIDEO_EXT = /\.(mp4|m4v|webm|mov|ogv|mkv)$/i;
 const EXT_OF_TYPE = { 'video/mp4': 'mp4', 'video/x-m4v': 'm4v', 'video/webm': 'webm', 'video/quicktime': 'mov', 'video/ogg': 'ogv', 'video/x-matroska': 'mkv' };
 // 조각 스트리밍(HLS·DASH)의 목록 파일. 이런 페이지는 영상이 조각으로 나뉘어 와서 원본 파일이 따로 없다.
-const STREAM_TYPE = /^application\/(vnd\.apple\.mpegurl|x-mpegurl|dash\+xml)$/;
+const STREAM_TYPE = /^application\/(vnd\.apple\.mpegurl|x-mpegurl|dash\+xml)$|^audio\/(x-)?mpegurl$/;
 const STREAM_EXT = /\.(m3u8|mpd)$/i;
 
 function looksLikeVideo(type, url, headers) {
@@ -67,7 +67,7 @@ chrome.webRequest.onHeadersReceived.addListener(
     if (details.statusCode !== 200 && details.statusCode !== 206) return; // 리다이렉트·오류 응답 제외
     const type = header(details.responseHeaders, 'content-type').split(';')[0].trim().toLowerCase();
     const url = new URL(details.url);
-    if (STREAM_TYPE.test(type) || STREAM_EXT.test(url.pathname)) { markStream(details.tabId, details.timeStamp, details.url, /mpegurl/.test(type) || /\.m3u8$/i.test(url.pathname)); return; }
+    if (STREAM_TYPE.test(type) || STREAM_EXT.test(url.pathname)) { markStream(details.tabId, details.timeStamp, details.url, /mpegurl/.test(type) || /\.m3u8$/i.test(url.pathname), details.initiator); return; }
     if (!looksLikeVideo(type, url, details.responseHeaders) || isSegmentUrl(url)) return;
     const size = totalSize(details.responseHeaders);
     const sizeKnown = !!(header(details.responseHeaders, 'content-range') || header(details.responseHeaders, 'content-length'));
@@ -124,17 +124,24 @@ async function clearTab(tabId, before = Infinity) {
 }
 
 // 조각 스트리밍을 쓰는 탭. 팝업이 "원본 파일이 없는 이유"를 알려 주는 데 쓴다.
-const streamTabs = new Map(); // 탭 → { ts: 처음 본 시각, hls: [조각 목록(m3u8) 주소들] }
+const streamTabs = new Map(); // 탭 → { ts: 처음 본 시각, hls: [{ url: 조각 목록(m3u8) 주소, from: 그것을 불러온 프레임의 출처 }] }
+const HLS_KEEP = 8; // 탭마다 기억하는 조각 목록 수 (최근 것부터)
 // 배경이 잠들었다 깨어난 직후에는 저장해 둔 값을 다 읽기 전일 수 있으므로, 쓰는 곳마다 이 약속(promise)을 기다린다
-const streamTabsReady = chrome.storage.session.get('streamTabs').then(r => (r.streamTabs || []).forEach(([t, v]) => streamTabs.has(t) || streamTabs.set(t, typeof v === 'object' && v ? v : { ts: v, hls: [] })), () => {});
-async function markStream(tabId, ts, url, isHls) {
+const streamTabsReady = chrome.storage.session.get('streamTabs').then(r => (r.streamTabs || []).forEach(([t, v]) => streamTabs.has(t) || streamTabs.set(t, typeof v === 'object' && v ? { ts: v.ts, hls: (v.hls || []).map(h => typeof h === 'string' ? { url: h, from: '' } : h) } : { ts: v, hls: [] })), () => {});
+async function markStream(tabId, ts, url, isHls, from) {
   await streamTabsReady;
   const s = streamTabs.get(tabId) || { ts, hls: [] };
   const had = streamTabs.has(tabId);
   // 플레이어는 화질 목록과 화질별 조각 목록을 여러 개 불러온다. 받을 때 그중에서 고르도록 주소를 모아 둔다.
-  const added = isHls && !s.hls.includes(url) && s.hls.length < 8;
-  if (added) s.hls.push(url);
-  if (had && !added) return;
+  // 한 탭에서 영상을 여러 개 보면 계속 쌓이므로 최근 것만 남긴다 (맨 뒤가 가장 최근).
+  const last = s.hls[s.hls.length - 1];
+  const changed = isHls && last?.url !== url;
+  if (changed) {
+    s.hls = s.hls.filter(h => h.url !== url);
+    s.hls.push({ url, from: /^https?:/.test(from || '') ? from : '' });
+    if (s.hls.length > HLS_KEEP) s.hls.splice(0, s.hls.length - HLS_KEEP);
+  }
+  if (had && !changed) return;
   streamTabs.set(tabId, s);
   chrome.storage.session.set({ streamTabs: [...streamTabs] });
 }
@@ -294,7 +301,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
   // 페이지 전체 캡처: 팝업이 시작을 알린 탭에서만, 그 탭의 content.js가 화면을 한 장씩 요청할 수 있다
   if (msg.type === 'capture-start') { captureTabs.add(msg.tabId); sendResponse({ ok: true }); return; }
-  if (msg.type === 'capture-end') { if (_sender.tab) captureTabs.delete(_sender.tab.id); return; }
+  if (msg.type === 'capture-end') {
+    // 페이지(content.js)는 자기 탭만, 팝업은 시작을 알렸던 탭을 끝낼 수 있다
+    if (_sender.tab) captureTabs.delete(_sender.tab.id);
+    else if (_sender.url?.startsWith(chrome.runtime.getURL(''))) captureTabs.delete(msg.tabId);
+    return;
+  }
   if (msg.type === 'capture-visible') {
     const t = _sender.tab;
     if (!t || !captureTabs.has(t.id)) { sendResponse({ ok: false, error: '캡처가 시작되지 않았습니다.' }); return; }
@@ -324,12 +336,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
   if (msg.type === 'has-stream') { streamTabsReady.then(() => sendResponse(streamTabs.has(msg.tabId))); return true; }
   if (msg.type === 'get-stream') {
-    Promise.all([streamTabsReady, chrome.storage.session.get('hlsJob')]).then(([, { hlsJob }]) =>
-      sendResponse({ any: streamTabs.has(msg.tabId), hls: streamTabs.get(msg.tabId)?.hls || [], job: hlsJob || null }));
+    Promise.all([streamTabsReady, hlsJobNow()]).then(([, job]) =>
+      sendResponse({ any: streamTabs.has(msg.tabId), hls: streamTabs.get(msg.tabId)?.hls || [], job: job || null }));
     return true;
   }
   if (msg.type === 'hls-start') { hlsStart(msg).then(() => sendResponse({ ok: true }), e => sendResponse({ ok: false, error: e.message })); return true; }
-  if (msg.type === 'hls-cancel') { chrome.runtime.sendMessage({ type: 'offscreen-hls-cancel' }).catch(() => {}); sendResponse({ ok: true }); return; }
+  if (msg.type === 'hls-cancel') { hlsCancel().then(() => sendResponse({ ok: true })); return true; }
   if (msg.type === 'hls-progress') { hlsProgress(msg); return; }
   if (msg.type === 'hls-done') { hlsDone(msg); return; }
   if (msg.type === 'download') {
@@ -407,11 +419,11 @@ async function maybeCloseOffscreen() {
     chrome.storage.session.get('tabRec'),
     chrome.downloads.search({ state: 'in_progress' }),
   ]);
-  if ((await chrome.storage.session.get('hlsJob')).hlsJob?.state === 'running') return; // 스트리밍을 받는 중
+  if (hlsStarting || (await chrome.storage.session.get('hlsJob')).hlsJob?.state === 'running') return; // 스트리밍을 받는 중
   if (tabRec || tabRecStarting || fetchesInFlight > 0 || active.some(d => d.url.startsWith(EXT_BLOB))) return;
   if (!(await chrome.offscreen.hasDocument())) return;
   // 위에서 기다리는 사이 새 작업이 시작됐을 수 있으므로 닫기 직전에 한 번 더 확인
-  if (fetchesInFlight > 0 || creatingOffscreen || tabRecStarting || closingOffscreen) return;
+  if (fetchesInFlight > 0 || creatingOffscreen || tabRecStarting || closingOffscreen || hlsStarting) return;
   closingOffscreen = chrome.offscreen.closeDocument().catch(() => {}).finally(() => { closingOffscreen = null; });
   await closingOffscreen;
 }
@@ -748,46 +760,99 @@ function updateLibrary(id, change) {
 // 실제 작업은 숨겨진 페이지(hls.js)가 하고, 여기서는 시작·진행 표시·저장을 맡는다.
 // 작업 상태는 session 저장소(hlsJob)에 두어, 배경이 잠들었다 깨어나도 이어진다.
 const HLS_RULE = 2;
-async function hlsStart({ tabId, title, pageUrl }) {
-  await streamTabsReady;
-  const urls = streamTabs.get(tabId)?.hls || [];
-  if (!urls.length) throw new Error('받을 스트리밍 영상을 찾지 못했습니다. 영상을 한 번 재생한 뒤 다시 눌러 주세요.');
+const HLS_SILENT_MS = 3 * 60_000; // 숨겨진 페이지는 10초마다 소식을 보낸다. 이만큼 끊기면 죽은 것으로 본다.
+const UPDATE_HOST = 'stream.plustonic.com'; // 새 버전 확인 요청에는 Referer를 붙이지 않는다
+let hlsStarting = false;
+// 작업 상태(hlsJob)는 여러 소식이 거의 동시에 오므로 한 줄로 세워 차례대로 고친다
+let hlsQueue = Promise.resolve();
+const hlsEdit = fn => (hlsQueue = hlsQueue.then(async () => {
   const { hlsJob } = await chrome.storage.session.get('hlsJob');
-  if (hlsJob?.state === 'running') throw new Error('이미 다른 스트리밍 영상을 받는 중입니다.');
-  // 조각 서버가 "어느 페이지에서 왔는지(Referer)"를 확인하는 경우가 많다. 이 확장이 보내는 요청에만 원래 페이지 주소를 붙인다.
-  let origin = '';
-  try { origin = new URL(pageUrl).origin; } catch {}
-  if (origin) {
-    await chrome.declarativeNetRequest.updateSessionRules({
-      removeRuleIds: [HLS_RULE],
-      addRules: [{ id: HLS_RULE, priority: 1,
-        action: { type: 'modifyHeaders', requestHeaders: [{ header: 'referer', operation: 'set', value: origin + '/' }] },
-        condition: { initiatorDomains: [chrome.runtime.id], tabIds: [-1], excludedRequestDomains: TIKTOK_CDN, resourceTypes: ['xmlhttprequest', 'other'] } }],
-    }).catch(e => console.warn('Referer 규칙 등록 실패', e));
-  }
-  const tab = await chrome.tabs.get(tabId).catch(() => null);
-  await chrome.storage.session.set({ hlsJob: { state: 'running', tabId, title, pageUrl, incognito: !!tab?.incognito, done: 0, total: 0, bytes: 0, startedAt: Date.now() } });
-  await ensureOffscreen();
-  chrome.runtime.sendMessage({ type: 'offscreen-hls', urls }).catch(() => {});
+  const next = await fn(hlsJob);
+  if (next) await chrome.storage.session.set({ hlsJob: next });
+  return next || hlsJob;
+}).catch(e => { console.warn('스트리밍 작업 상태 기록 실패', e); }));
+const hlsFail = (job, error) => ({ ...job, state: 'error', error, endedAt: Date.now() });
+const dropHlsRule = () => chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: [HLS_RULE] }).catch(() => {});
+
+// 지금의 작업 상태. 받는 중이라고 적혀 있어도 숨겨진 페이지가 사라졌거나 소식이 오래 끊겼으면(메모리 부족으로 죽은 경우 등)
+// 실패로 바꿔 적는다. 그래야 "받는 중"에 영원히 멈춰 다음 영상을 못 받는 일이 없다.
+async function hlsJobNow() {
+  const job = await hlsEdit(async job => {
+    if (job?.state !== 'running' || hlsStarting) return;
+    const silent = Date.now() - (job.beat || job.startedAt);
+    const gone = silent > 5000 && !(await chrome.offscreen.hasDocument());
+    if (!gone && silent < HLS_SILENT_MS) return;
+    dropHlsRule();
+    chrome.runtime.sendMessage({ type: 'offscreen-hls-cancel' }).catch(() => {});
+    return hlsFail(job, '받는 도중 멈췄습니다. 다시 시도해 주세요. 영상이 아주 크면 위의 녹화를 이용해 주세요.');
+  });
+  if (job?.state === 'error' && Date.now() - job.endedAt < 1000) maybeCloseOffscreen();
+  return job;
 }
-async function hlsProgress({ done, total, bytes }) {
-  const { hlsJob } = await chrome.storage.session.get('hlsJob');
-  if (hlsJob?.state === 'running') await chrome.storage.session.set({ hlsJob: { ...hlsJob, done, total, bytes } });
+
+async function hlsStart({ tabId, title, pageUrl, hint }) {
+  await streamTabsReady;
+  const list = streamTabs.get(tabId)?.hls || [];
+  if (!list.length) throw new Error('받을 스트리밍 영상을 찾지 못했습니다. 영상을 한 번 재생한 뒤 다시 눌러 주세요.');
+  const cur = await hlsJobNow();
+  if (hlsStarting || cur?.state === 'running') throw new Error('이미 다른 스트리밍 영상을 받는 중입니다.'); // 기다린 뒤에 다시 확인 (연달아 누른 경우)
+  hlsStarting = true;
+  const job = Date.now();
+  try {
+    // 조각 서버가 "어느 페이지에서 왔는지(Referer)"를 확인하는 경우가 많다. 이 확장이 보내는 요청에만 붙인다.
+    // 끼워 넣은 플레이어(프레임)가 불러온 영상이면 그 프레임의 출처를, 모르면 탭의 페이지 주소를 쓴다.
+    let origin = list[list.length - 1].from || '';
+    if (!origin) { try { origin = new URL(pageUrl).origin; } catch {} }
+    if (/^https?:/.test(origin)) {
+      await chrome.declarativeNetRequest.updateSessionRules({
+        removeRuleIds: [HLS_RULE],
+        addRules: [{ id: HLS_RULE, priority: 1,
+          action: { type: 'modifyHeaders', requestHeaders: [{ header: 'referer', operation: 'set', value: origin + '/' }] },
+          condition: { initiatorDomains: [chrome.runtime.id], tabIds: [-1], excludedRequestDomains: [...TIKTOK_CDN, UPDATE_HOST], resourceTypes: ['xmlhttprequest', 'other'] } }],
+      }).catch(e => console.warn('Referer 규칙 등록 실패', e));
+    }
+    const tab = await chrome.tabs.get(tabId).catch(() => null);
+    await hlsEdit(() => ({ state: 'running', job, tabId, title, pageUrl, incognito: !!tab?.incognito, done: 0, total: 0, bytes: 0, startedAt: job, beat: job }));
+    await ensureOffscreen();
+    await chrome.runtime.sendMessage({ type: 'offscreen-hls', job, urls: list.map(h => h.url), hint: Number(hint) > 0 ? Number(hint) : 0 });
+  } catch (e) {
+    // 시작하지 못했으면 "받는 중"으로 남기지 않는다
+    dropHlsRule();
+    await hlsEdit(j => (j?.job === job ? hlsFail(j, e.message || '시작하지 못했습니다.') : null));
+    hlsStarting = false;
+    maybeCloseOffscreen();
+    throw e;
+  }
+  hlsStarting = false;
+}
+async function hlsCancel() {
+  const res = await chrome.runtime.sendMessage({ type: 'offscreen-hls-cancel' }).catch(() => null);
+  // 숨겨진 페이지가 없거나 거기서 돌고 있는 작업이 없으면 "취소됨" 소식도 오지 않으므로 여기서 끝낸다
+  if (!res?.active) {
+    dropHlsRule();
+    await hlsEdit(j => (j?.state === 'running' && !hlsStarting ? hlsFail(j, '취소했습니다.') : null));
+    maybeCloseOffscreen();
+  }
+}
+function hlsProgress({ job, done, total, bytes }) {
+  return hlsEdit(j => (j?.state === 'running' && j.job === job ? { ...j, done, total, bytes, beat: Date.now() } : null));
 }
 async function hlsDone(res) {
-  const { hlsJob } = await chrome.storage.session.get('hlsJob');
-  chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: [HLS_RULE] }).catch(() => {});
-  if (!hlsJob) return;
-  let state = { ...hlsJob, state: 'error', error: res.error || '받지 못했습니다.', endedAt: Date.now() };
-  if (res.ok) {
+  let blobUrl = res.ok ? res.url : '';
+  await hlsEdit(async j => {
+    if (!j || j.job !== res.job || j.state !== 'running') return; // 지난 작업(취소·중단 처리된 것)의 소식
+    dropHlsRule();
+    if (!res.ok) return hlsFail(j, res.error || '받지 못했습니다.');
     try {
-      const filename = await buildName(hlsJob.title, hlsJob.pageUrl, 'mp4');
+      const filename = await buildName(j.title, j.pageUrl, 'mp4');
       const id = await safeDownload(res.url, filename);
+      blobUrl = '';
       offscreenBlobs.set(id, res.url); // 저장이 끝나면 숨겨진 페이지가 잡고 있는 데이터를 놓아 준다
-      logSave({ kind: '스트리밍 다운로드', title: hlsJob.title, pageUrl: hlsJob.pageUrl, filename, downloadId: id, thumb: '', incognito: hlsJob.incognito });
-      state = { ...hlsJob, state: 'done', size: res.size, seconds: res.seconds, quality: res.quality, endedAt: Date.now() };
-    } catch (e) { state.error = e.message; }
-  }
-  await chrome.storage.session.set({ hlsJob: state });
+      logSave({ kind: '스트리밍 다운로드', title: j.title, pageUrl: j.pageUrl, filename, downloadId: id, thumb: '', incognito: j.incognito });
+      return { ...j, state: 'done', size: res.size, seconds: res.seconds, quality: res.quality, endedAt: Date.now() };
+    } catch (e) { return hlsFail(j, e.message); }
+  });
+  // 저장으로 이어지지 않은 결과물은 바로 놓아 준다
+  if (blobUrl) chrome.runtime.sendMessage({ type: 'offscreen-revoke', url: blobUrl }).catch(() => {});
   maybeCloseOffscreen();
 }

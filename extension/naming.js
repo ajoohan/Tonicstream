@@ -45,7 +45,8 @@ function formatName(naming, title, pageUrl, ext, { plain = false, suffix = '' } 
   if (!plain && naming.pattern !== 'title') parts.push(today());
   if (!plain && naming.pattern === 'date_site_title' && site) parts.push(site);
   parts.push(safeName(title));
-  const name = safeName(parts.join('_')) + (suffix ? ` ${suffix}` : '');
+  const tail = cleanPart(suffix, 20); // 붙임말도 같은 규칙으로 걸러, 폴더 구분 글자 등이 섞여 들어오지 못하게 한다
+  const name = safeName(parts.join('_')) + (tail ? ` ${tail}` : '');
   const folder = safeFolder(naming.folder);
   return (folder ? `${folder}/` : '') + name + (ext ? `.${ext}` : '');
 }
