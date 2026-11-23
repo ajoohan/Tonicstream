@@ -123,14 +123,31 @@ if (!(() => { try { return typeof window.__tonicstream === 'function' && window.
 
   // ── 페이지 전체 캡처 ──
   // 한 화면씩 내려가며 찍어 세로로 이어 붙인다. 상세페이지·랜딩페이지를 한 장으로 저장할 때 쓴다.
-  // 화면에 고정된 메뉴(상단 바 등)는 첫 장에만 남기고 그다음부터는 숨겨, 장마다 반복해 찍히지 않게 한다.
+  // 화면을 따라다니는 요소가 장마다 반복해 찍히지 않도록 찍기 전에 정리한다 (끝나면 되돌린다):
+  //  - 스크롤하면 달라붙는 요소(sticky): 달라붙지 않게 해서 원래 자리에 한 번만 나오게 한다
+  //  - 화면에 고정된 요소(fixed): 상단 메뉴는 첫 장에만 남기고, 아래쪽에 떠 있는 것(구매 바·채팅 버튼 등)은 처음부터 숨긴다
   let capturing = false;
   async function capturePage(title) {
     if (capturing) return { ok: false, error: '이미 캡처하는 중입니다.' };
     capturing = true;
     const root = document.scrollingElement || document.documentElement;
     const startY = root.scrollTop;
-    const hidden = [];
+    const touched = new Map(); // 요소 → 원래 style 속성 값
+    const barShown = bar ? bar.style.display : '';
+    const tame = first => {
+      for (const e of [...document.querySelectorAll('body *')].slice(0, 6000)) {
+        if (touched.has(e)) continue;
+        const pos = getComputedStyle(e).position;
+        if (pos !== 'fixed' && pos !== 'sticky') continue;
+        if (pos === 'fixed' && !e.offsetHeight) continue;
+        const r = e.getBoundingClientRect();
+        // 첫 장에서는 아래쪽에 떠 있는 작은 것(구매 바·채팅 버튼)만 숨긴다. 상단 메뉴와 화면을 가득 채운 틀은 남기고 다음 장에서 다시 본다.
+        if (pos === 'fixed' && first && (r.top < innerHeight * 0.3 || r.height >= innerHeight * 0.6)) continue;
+        touched.set(e, e.getAttribute('style'));
+        if (pos === 'sticky') { e.style.setProperty('position', 'relative', 'important'); e.style.setProperty('inset', 'auto', 'important'); }
+        else e.style.setProperty('visibility', 'hidden', 'important');
+      }
+    };
     const style = document.createElement('style');
     style.textContent = 'html{scroll-behavior:auto!important}::-webkit-scrollbar{display:none!important}';
     document.documentElement.appendChild(style);
@@ -145,7 +162,11 @@ if (!(() => { try { return typeof window.__tonicstream === 'function' && window.
       for (let y = 0; y < total; y += vh) {
         const top = Math.min(y, Math.max(0, full - vh)); // 마지막 장은 바닥에 맞춘다
         root.scrollTop = top;
-        await new Promise(r => setTimeout(r, shots ? 650 : 350)); // 늦게 뜨는 그림을 기다리고, 브라우저의 캡처 횟수 제한(초당 2회)도 지킨다
+        await new Promise(r => setTimeout(r, shots ? 600 : 350)); // 늦게 뜨는 그림을 기다리고, 브라우저의 캡처 횟수 제한(초당 2회)도 지킨다
+        // 스크롤한 뒤에야 고정으로 바뀌는 메뉴도 있으므로 장마다 다시 살핀다. 바꾼 것이 화면에 반영될 때까지 잠깐 기다린다.
+        tame(shots === 0);
+        await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+        await new Promise(r => setTimeout(r, 60));
         const res = await tell({ type: 'capture-visible' });
         if (!res?.ok) throw new Error(res?.error || '화면을 찍지 못했습니다.');
         const img = new Image();
@@ -164,12 +185,6 @@ if (!(() => { try { return typeof window.__tonicstream === 'function' && window.
         const drawTop = root.scrollTop; // 실제로 멈춘 위치 (요청한 곳과 다를 수 있다)
         ctx.drawImage(img, 0, Math.round(drawTop * scale), canvas.width, Math.round(img.height * ctx.__k));
         shots++;
-        if (shots === 1) {
-          for (const e of [...document.querySelectorAll('body *')].slice(0, 6000)) {
-            const pos = getComputedStyle(e).position;
-            if ((pos === 'fixed' || pos === 'sticky') && e.offsetHeight) { hidden.push([e, e.style.visibility]); e.style.setProperty('visibility', 'hidden', 'important'); }
-          }
-        }
         if (top + vh >= total) break;
       }
       const blob = await new Promise((res, rej) => canvas.toBlob(b => b ? res(b) : rej(new Error('그림을 만들지 못했습니다.')), 'image/png'));
@@ -179,14 +194,18 @@ if (!(() => { try { return typeof window.__tonicstream === 'function' && window.
       const t = document.createElement('canvas');
       t.width = 240; t.height = 240;
       t.getContext('2d').drawImage(canvas, 0, 0, canvas.width, Math.min(canvas.height, canvas.width), 0, 0, 240, 240 * Math.min(1, canvas.height / canvas.width));
-      const saved = await tell({ type: 'save-blob', url, title: title || document.title, ext: 'png', suffix: '전체', kind: '페이지 캡처', thumb: t.toDataURL('image/jpeg', 0.6) });
+      // 글자가 많은 페이지는 미리보기가 커진다. 보관함이 받는 크기(약 20KB)에 들어올 때까지 화질을 낮춘다.
+      let thumb = '';
+      for (const q of [0.6, 0.4, 0.25]) { thumb = t.toDataURL('image/jpeg', q); if (thumb.length <= 19_000) break; }
+      const saved = await tell({ type: 'save-blob', url, title: title || document.title, ext: 'png', suffix: '전체', kind: '페이지 캡처', thumb });
       if (!saved?.ok) {
         const a = Object.assign(document.createElement('a'), { href: url, download: `${safeName(title || document.title)} 전체.png` });
         document.documentElement.appendChild(a); a.click(); a.remove();
       }
       return { ok: true, width: canvas.width, height: canvas.height, shots, cut: full > total };
     } finally {
-      for (const [e, v] of hidden) { e.style.visibility = v; }
+      for (const [e, v] of touched) { if (v === null) e.removeAttribute('style'); else e.setAttribute('style', v); }
+      if (bar) bar.style.display = barShown; // 녹화 중 띄운 정지 바를 되돌린다
       style.remove();
       root.scrollTop = startY;
       capturing = false;

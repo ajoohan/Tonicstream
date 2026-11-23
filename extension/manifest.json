@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Tonicstream 영상 저장",
-  "version": "0.10.0",
+  "version": "0.10.1",
   "minimum_chrome_version": "116",
   "description": "브라우저에서 재생 중인 영상(쇼츠·릴스·틱톡 등)을 MP4로 저장합니다. 화면 녹화도 지원합니다.",
   "icons": {
