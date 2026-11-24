@@ -75,6 +75,17 @@ if (!(() => { try { return typeof window.__tonicstream === 'function' && window.
   // ── 페이지 안에서 영상 파일 주소 찾기 ──
   // 네트워크로 지나간 것만 보면 놓치는 경우(아직 재생하지 않은 영상, 확장이 켜지기 전에 불러온 영상)를 보완한다.
   // 여기서는 후보만 모으고, 실제 영상 파일인지는 배경(background)이 서버에 물어 확인한다.
+  // 페이지가 이미 불러온 스트리밍 목록(m3u8·mpd) 주소. 확장이 켜지기 전에 불러온 것도 브라우저 기록에 남아 있다.
+  function scanStreams() {
+    const out = new Set();
+    const add = raw => {
+      try { const u = new URL(raw, document.baseURI); if (/^https?:$/.test(u.protocol) && /\.(m3u8|mpd)$/i.test(u.pathname)) out.add(u.href.split('#')[0]); } catch {}
+    };
+    try { for (const e of performance.getEntriesByType('resource')) add(e.name); } catch {}
+    for (const v of document.querySelectorAll('video, video source')) { add(v.currentSrc || ''); add(v.getAttribute('src') || ''); }
+    return [...out].slice(-12);
+  }
+
   function scanPage() {
     const EXT = /\.(mp4|m4v|webm|mov|ogv|mkv)$/i;
     const out = new Set();
@@ -570,7 +581,7 @@ if (!(() => { try { return typeof window.__tonicstream === 'function' && window.
       capturePage(msg.title).then(sendResponse, e => sendResponse({ ok: false, error: e.message }));
       return true;
     }
-    if (msg.type === 'scan') { sendResponse({ urls: scanPage() }); return; }
+    if (msg.type === 'scan') { sendResponse({ urls: scanPage(), streams: scanStreams() }); return; }
     if (msg.type === 'list') { sendResponse({ videos: list(), title: document.title }); return; }
     if (msg.type === 'record') {
       startRecording(msg.id, msg.fromStart, msg.title, msg.range, msg.audioOnly)
