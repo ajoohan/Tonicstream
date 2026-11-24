@@ -44,6 +44,16 @@ pre { background:#1a1a20; border:1px solid var(--line); border-radius:10px; padd
     <p><b>정책에 넣을 값</b> (한 줄)<br><code>feeaeacfnjjglkpblombicpdecfdghfp;https://stream.plustonic.com/updates.xml</code></p>
   </div>
 
+  <h2>순서 한눈에 보기</h2>
+  <ol>
+    <li><b>서명 열쇠 등록</b> (한 번만): GitHub 저장소 → Settings → Secrets and variables → Actions → New repository secret. 이름 <code>CRX_PRIVATE_KEY</code>, 값은 열쇠 파일 내용 전체. 등록 후 다음 배포부터 <a href="updates.xml">updates.xml</a>이 열립니다(지금 404면 아직 등록 전).</li>
+    <li><b>PC가 회사 관리 대상인지 확인</b>: 명령 프롬프트에서 <code>dsregcmd /status</code> → <code>AzureAdJoined : YES</code> 또는 <code>DomainJoined : YES</code>이면 관리 대상입니다. 둘 다 NO인 PC(개인 PC, 도메인 미가입)는 Edge·Chrome이 스토어 밖 확장의 강제 설치를 막으므로, 지금처럼 ZIP으로 설치·업데이트합니다.</li>
+    <li><b>정책 넣기</b>: 직원이 많으면 아래 그룹 정책(GPO)이나 Intune으로 한 번에, 몇 대뿐이면 각 PC에서 <a href="tonicstream-install-policy.reg" download>설치 정책 파일(.reg)</a>을 관리자 권한으로 실행합니다. Edge와 Chrome 둘 다 들어갑니다.</li>
+    <li><b>브라우저 다시 시작</b> 후 <code>edge://extensions</code>에서 Tonicstream이 “조직에서 설치함”으로 보이면 끝입니다.</li>
+    <li><b>기존 ZIP 설치본 정리</b>: 예전 확장의 보관함에서 <b>백업</b> → 새 확장의 보관함에서 <b>가져오기</b> → 예전 확장 제거.</li>
+  </ol>
+  <p class="muted">이미 다른 확장을 강제 설치 정책으로 쓰고 있다면 .reg 파일의 이름 "1"이 겹칠 수 있습니다. 그때는 빈 번호(예: "2")로 바꿔 넣으세요. 정책을 없애려면 <a href="tonicstream-remove-policy.reg" download>제거 정책 파일(.reg)</a>을 실행합니다.</p>
+
   <h2>1. Edge (Windows · 그룹 정책 또는 Intune)</h2>
   <p>정책 <b>ExtensionInstallForcelist</b>(강제로 설치되는 확장 목록)에 위의 한 줄을 추가합니다.</p>
   <p>그룹 정책 편집기: 컴퓨터 구성 → 관리 템플릿 → Microsoft Edge → 확장 → “강제 설치된 확장 목록 제어”</p>
