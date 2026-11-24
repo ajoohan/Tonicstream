@@ -78,7 +78,9 @@ main에 푸시하면 GitHub Actions(`.github/workflows/pages.yml`)가 `extension
 
 ## 새 버전을 낼 때
 
-1. `extension/manifest.json`의 `version`을 올립니다.
+버전 매기는 규칙과 지금까지 바뀐 내용은 `CHANGELOG.md`에 있습니다. 0.12.0부터 새로 기록합니다.
+
+1. `extension/manifest.json`의 `version`을 올리고, `CHANGELOG.md` 맨 위에 바뀐 내용을 적습니다.
 2. `release-notes.txt`에 이번 버전에서 바뀐 점을 한 줄에 하나씩, 최대 3줄 적습니다. 설치된 확장의 팝업 알림에 그대로 표시됩니다.
 3. main에 반영하면 배포할 때 ZIP과 `version.json`이 자동으로 만들어지고, 소개 페이지의 버전 표기도 같은 버전으로 바뀝니다.
 4. 스토어에 올릴 때는 `store/README.md`의 버전과 문구를 직접 고칩니다.
