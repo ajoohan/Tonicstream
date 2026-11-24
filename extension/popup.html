@@ -47,8 +47,13 @@
   </section>
 
   <section>
-    <h2>바로 다운로드 <small>원본 파일이 감지된 경우</small></h2>
+    <h2>바로 다운로드 <small>원본 파일 · 스트리밍(HLS·DASH)</small></h2>
     <div id="files"><p class="empty">불러오는 중…</p></div>
+    <details class="direct">
+      <summary>주소로 직접 받기</summary>
+      <div class="meta">영상 주소(.mp4)나 스트리밍 목록 주소(.m3u8 · .mpd)를 붙여 넣으세요. 이 탭의 페이지에서 온 것처럼 받습니다.</div>
+      <div class="row"><input type="text" id="direct-url" placeholder="https://…/master.m3u8" spellcheck="false"><button id="direct-go">받기</button></div>
+    </details>
   </section>
 
   <details id="naming">
