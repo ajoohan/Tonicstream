@@ -36,18 +36,24 @@ async function fetchOnce(url, { range, signal, fresh }) {
       headers: range ? { Range: `bytes=${range.start}-${range.end}` } : {} });
     if (!r.ok) { r.body?.cancel().catch(() => {}); return { status: r.status }; }
     // 조금씩 읽으며, 데이터가 오는 동안에는 기다린다 (큰 조각도 끊기지 않게)
+    // 범위를 무시하고 파일 전체를 보내는 서버라면 필요한 곳까지만 읽고 끊는다 (큰 파일을 통째로 받지 않게)
+    const ignored = range && r.status === 200;
+    const need = ignored ? range.end + 1 : Infinity;
     const chunks = [];
     let size = 0;
     const reader = r.body.getReader();
-    for (;;) {
+    while (size < need) {
       const { done, value } = await reader.read();
       if (done) break;
       alive();
       chunks.push(value); size += value.byteLength;
     }
-    const u8 = chunks.length === 1 ? chunks[0] : new Uint8Array(size);
+    if (size >= need) reader.cancel().catch(() => {});
+    let u8 = chunks.length === 1 ? chunks[0] : new Uint8Array(size);
     if (chunks.length !== 1) { let p = 0; for (const c of chunks) { u8.set(c, p); p += c.byteLength; } }
-    return { status: r.status, u8, total: Number((r.headers.get('content-range') || '').split('/')[1]) || 0 };
+    if (ignored) u8 = u8.subarray(range.start, Math.min(size, range.end + 1));
+    const total = Number((r.headers.get('content-range') || '').split('/')[1]) || (ignored || !range ? Number(r.headers.get('content-length')) || 0 : 0);
+    return { status: r.status, u8, total };
   } catch (e) {
     if (signal?.aborted) throw new DOMException('취소', 'AbortError');
     throw ctl.signal.aborted ? new Error('응답이 너무 오래 없습니다') : e;
@@ -70,10 +76,8 @@ async function fetchRetry(url, { range = null, signal, text = false, fresh = fal
         continue;
       }
       if (text) return new TextDecoder().decode(r.u8);
-      let u8 = r.u8;
-      // 범위를 무시하고 파일 전체를 보내는 서버도 있다
-      if (range && r.status === 200 && u8.byteLength > range.end - range.start + 1) u8 = u8.subarray(range.start, range.end + 1);
-      return meta ? { u8, total: r.total || (r.status === 200 ? r.u8.byteLength : 0) } : u8;
+      const u8 = r.u8;
+      return meta ? { u8, total: r.total } : u8;
     } catch (e) {
       if (signal?.aborted) throw new DOMException('취소', 'AbortError');
       last = e;
@@ -169,7 +173,8 @@ function parseMpd(text, mpdUrl) {
   const periods = kids(mpd, 'Period').map((p, i, all) => {
     const start = p.hasAttribute('start') ? isoSeconds(p.getAttribute('start')) : prevEnd;
     const next = all[i + 1]?.hasAttribute('start') ? isoSeconds(all[i + 1].getAttribute('start')) : 0;
-    const dur = isoSeconds(p.getAttribute('duration')) || (next > start ? next - start : total ? total - start : 0);
+    // 길이: 적혀 있으면 그것, 없으면 다음 기간 시작까지, 마지막 기간이면 전체 길이까지
+    const dur = isoSeconds(p.getAttribute('duration')) || (next > start ? next - start : !all[i + 1] && total > start ? total - start : 0);
     prevEnd = start + dur;
     return { el: p, dur, reps: repsOf(p) };
   });
@@ -417,10 +422,13 @@ async function dashPresentation(m, signal) {
         const pv = p.reps.includes(v) ? v : sameRep(p.reps, v);
         const pa = a && (p.reps.includes(a.rep) ? a.rep : sameRep(p.reps, a.rep));
         if (!pv || (a && !pa)) { skipped += p.dur; continue; }
-        for (const [src, r] of [[out[0], pv], ...(a ? [[out[1], pa]] : [])]) {
-          const segs = await dashSegments(r, p.dur, signal);
-          segs.forEach((g, i) => src.segments.push({ ...g, start: at + g.start, disc: i === 0 && src.segments.length > 0 }));
+        // 구간 하나를 읽지 못해도(길이 정보가 없는 광고 구간 등) 나머지는 받는다
+        let lists;
+        try { lists = await Promise.all([pv, ...(a ? [pa] : [])].map(r => dashSegments(r, p.dur, signal))); } catch (e) {
+          if (signal.aborted) throw e;
+          skipped += p.dur || 1; continue;
         }
+        lists.forEach((segs, k) => segs.forEach((g, i) => out[k].segments.push({ ...g, start: at + g.start, disc: i === 0 && out[k].segments.length > 0 })));
         at += p.dur;
       }
       if (!out[0].segments.length) throw new Error('받을 영상 조각이 없습니다.');
@@ -461,6 +469,9 @@ function feeder(name, writer) {
       pending = end < bytes.byteLength ? bytes.slice(end) : null;
       if (pending && pending.byteLength > 512 * 1024 ** 2) throw new Error('조각 MP4 형식이 아니어서 나눠 받을 수 없습니다. 위의 녹화를 이용해 주세요.');
       bytes = bytes.subarray(0, end);
+      // 조각으로 나뉘지 않은 일반 MP4는 이 방식으로 합칠 수 없다. 큰 부분을 다 받기 전에 바로 알린다.
+      const moov = list.find(b => b.type === 'moov');
+      if (moov && !child(bytes, moov, 'mvex')) throw new Error('조각 MP4가 아닌 일반 MP4라 이 방식으로 받을 수 없습니다. 위의 녹화를 이용해 주세요.');
       if (!bytes.byteLength) return;
     }
     format ??= sniff(bytes);
@@ -586,7 +597,8 @@ async function runJobInner(msg, report, job) {
           let segs = pl.segments.filter(g => g.seq > x.last);
           const top = pl.segments.length ? pl.segments[pl.segments.length - 1].seq : x.last;
           if (x.last === -Infinity) segs = tail(segs, edgeSec || segs.slice(-LIVE_EDGE).reduce((n, g) => n + g.dur, 0));
-          else if (top < x.last) segs = pl.segments.map((g, i) => (i ? g : { ...g, disc: true })); // 방송 쪽에서 번호가 처음부터 다시 시작됨
+          // 번호가 크게 줄었으면 방송 쪽에서 처음부터 다시 시작한 것이다. 조금만 줄었으면 오래된 목록을 받은 것이니 이번에는 건너뛴다.
+          else if (top < x.last - Math.max(pl.segments.length, LIVE_EDGE) - 2) segs = pl.segments.map((g, i) => (i ? g : { ...g, disc: true }));
           else if (segs.length && segs[0].seq > x.last + 1) segs[0] = { ...segs[0], disc: true }; // 놓친 조각이 있으면 시간을 이어 붙인다
           for (const g of segs) { x.last = g.seq; }
           const timed = segs.map(g => { const o = { ...g, start: x.start }; x.start += g.dur; return o; });
@@ -594,9 +606,9 @@ async function runJobInner(msg, report, job) {
           if (pl.ended) x.ended = true;
         }
         first = false;
-        if (job.netError) break;
         batch.sort(order);
-        await process(batch);
+        await process(batch); // 읽기에 실패한 목록이 있어도 이미 모은 조각은 담는다
+        if (job.netError) break;
         if (st.every(x => x.ended) || Date.now() - t0 > LIVE_MAX_MS) break;
         // 다음 조각이 올 때까지 기다린다 (정지를 누르면 바로 깬다)
         await Promise.race([wait(Math.max(1000, Math.min(...st.map(x => x.target)) * 500), signal), new Promise(r => { job.wake = r; })]);
@@ -607,7 +619,8 @@ async function runJobInner(msg, report, job) {
     const res = await sink.finish();
     if (res.disk) diskFiles.set(res.url, res.disk);
     // 일부만 저장된 이유를 알려 준다 (네트워크 문제, 형식이 다른 기간을 건너뜀)
-    const note = job.netError ? `연결 문제로 ${Math.round(meta.seconds / 60) ? `${Math.round(meta.seconds / 60)}분` : `${Math.round(meta.seconds)}초`}까지만 저장했습니다 (${job.netError.message})`
+    const mmss = t => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
+    const note = job.netError ? `연결 문제로 ${mmss(meta.seconds)}까지만 저장했습니다 (${job.netError.message})`
       : sources.skipped > 1 ? '형식이 다른 구간(광고 등)은 빼고 저장했습니다' : '';
     return { url: res.url, size: res.size, seconds: Math.round(meta.seconds), quality, audioOnly: meta.audioOnly, kind: pres.kind,
       partial: !!job.netError || (job.stopped && !pres.live), live: pres.live, note };
