@@ -31,3 +31,8 @@ h1 { font-size: 24px; }
 .stars button { border: 0; background: none; padding: 0 2px; font-size: 18px; line-height: 1; color: var(--line); cursor: pointer; }
 .stars button.on { color: #f0b429; }
 .stars button:hover { color: #f0b429; filter: none; }
+.post { display: grid; gap: 3px; font-size: 12.5px; }
+.pline { color: var(--muted); font-weight: 600; }
+.cap { color: var(--fg); opacity: .85; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; word-break: break-all; }
+.hash { color: #3b5bdb; word-break: break-all; }
+@media (prefers-color-scheme: dark) { .hash { color: #8da2fb; } }

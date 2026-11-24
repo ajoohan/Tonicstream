@@ -3,7 +3,7 @@ name: Deploy stream.plustonic.com
 on:
   push:
     branches: [main]
-    paths: ["docs/**", "extension/**", "release-notes.txt", ".github/workflows/pages.yml"]
+    paths: ["docs/**", "extension/**", "scripts/**", "release-notes.txt", ".github/workflows/pages.yml"]
   workflow_dispatch:
 
 permissions:
@@ -30,6 +30,17 @@ jobs:
           rm -f docs/tonicstream-extension.zip
           cd extension && zip -qr ../docs/tonicstream-extension.zip . -x '.*'
           cd .. && unzip -l docs/tonicstream-extension.zip
+
+      # 회사 PC 자동 업데이트용: 서명한 CRX와 updates.xml을 만든다. 서명 열쇠(저장소 비밀값 CRX_PRIVATE_KEY)가 있을 때만.
+      - name: Build signed CRX for auto-update
+        env:
+          CRX_PRIVATE_KEY: ${{ secrets.CRX_PRIVATE_KEY }}
+        run: |
+          if [ -n "$CRX_PRIVATE_KEY" ]; then
+            node scripts/pack-crx.mjs docs/tonicstream-extension.zip docs https://stream.plustonic.com
+          else
+            echo "CRX_PRIVATE_KEY is not set; skipping CRX (ZIP download still works)"
+          fi
 
       # 설치된 확장이 새 버전이 나왔는지 확인할 때 읽는 파일.
       # 버전은 manifest.json에서, 안내 문구는 release-notes.txt(한 줄에 하나, 최대 3줄)에서 가져온다.

@@ -227,6 +227,7 @@ if (!(() => { try { return typeof window.__tonicstream === 'function' && window.
   // 페이지 위쪽에 잠깐 떴다 사라지는 안내
   function toast(text) {
     const host = document.createElement('div');
+    host.dataset.tonicstreamToast = '';
     host.style.cssText = 'all:initial;position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:2147483647;max-width:min(92vw,560px)';
     const root = host.attachShadow({ mode: 'closed' });
     const box = document.createElement('div');
@@ -489,6 +490,163 @@ if (!(() => { try { return typeof window.__tonicstream === 'function' && window.
     }
   }
 
+  // ── 장면 콘티 시트 ──
+  // 영상 전체에서 고르게 장면을 뽑아 한 장짜리 그리드 PNG로 만든다 (기획서·레퍼런스 장표용).
+  // 다른 도메인 영상처럼 그림을 꺼낼 수 없으면, 장면마다 탭 화면을 찍어 영상 부분만 잘라 쓴다.
+  let sheeting = false;
+  async function contactSheet(id, title) {
+    if (sheeting) throw new Error('이미 콘티를 만드는 중입니다.');
+    const v = findVideo(id);
+    if (!v || !v.videoWidth) throw new Error('영상을 찾을 수 없습니다. 영상을 재생한 뒤 다시 시도해 주세요.');
+    if (recs.has(id)) throw new Error('녹화 중인 영상입니다. 녹화를 마친 뒤에 만들어 주세요.');
+    const dur = v.duration;
+    if (!Number.isFinite(dur) || dur < 2) throw new Error('길이를 알 수 없는 영상(생방송 등)은 콘티를 만들 수 없습니다.');
+    sheeting = true;
+    const was = { t: v.currentTime, paused: v.paused, muted: v.muted };
+    const portrait = v.videoHeight > v.videoWidth;
+    const cols = portrait ? 6 : 4, rows = portrait ? 2 : 3, n = cols * rows;
+    const cw = portrait ? 240 : 400, ch = Math.round(cw * v.videoHeight / v.videoWidth);
+    const gap = 8, head = 72, pad = 16, label = 22;
+    const canvas = document.createElement('canvas');
+    canvas.width = pad * 2 + cols * cw + (cols - 1) * gap;
+    canvas.height = head + pad + rows * (ch + label) + (rows - 1) * gap + pad;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    const font = '"Pretendard Variable",Pretendard,system-ui,"Segoe UI","Malgun Gothic",sans-serif';
+    const fit = (text, max) => { let t = text; while (t && ctx.measureText(t).width > max) t = t.slice(0, -2); return t === text ? t : t + '…'; };
+    ctx.fillStyle = '#17171c'; ctx.font = `700 22px ${font}`;
+    ctx.fillText(fit(title || document.title || '영상', canvas.width - pad * 2), pad, 34);
+    ctx.fillStyle = '#5f5f6b'; ctx.font = `500 14px ${font}`;
+    const d = new Date(), fmt = t => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
+    ctx.fillText(fit(`${location.hostname.replace(/^www\./, '')} · 길이 ${fmt(dur)} · ${n}장면 · ${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} · ${location.href}`, canvas.width - pad * 2), pad, 58);
+
+    let screen = false; // 탭 화면을 찍어 쓰는 방식
+    let thumb = '';
+    try {
+      v.pause();
+      for (let i = 0; i < n; i++) {
+        const t = dur * (i + 0.5) / n;
+        v.currentTime = t;
+        await once(v, 'seeked', 8000);
+        if (v.readyState < 2) await once(v, 'canplay', 4000);
+        const x = pad + (i % cols) * (cw + gap), y = head + pad + Math.floor(i / cols) * (ch + label + gap);
+        let drawn = false;
+        if (!screen) {
+          // 그림을 꺼낼 수 없는 영상(다른 도메인)을 한 번이라도 그리면 시트 전체가 막히므로, 작은 시험용 그림판에서 먼저 확인한다
+          if (i === 0) {
+            try { const t1 = document.createElement('canvas'); t1.width = t1.height = 2; const c1 = t1.getContext('2d'); c1.drawImage(v, 0, 0, 2, 2); c1.getImageData(0, 0, 1, 1); }
+            catch { screen = true; }
+          }
+          if (!screen) { ctx.drawImage(v, x, y, cw, ch); drawn = true; }
+        }
+        if (!drawn) {
+          if (window !== top) throw new Error('다른 사이트에서 끼워 넣은 영상이라 콘티를 만들 수 없습니다. 장면 캡처를 이용해 주세요.');
+          if (i === 0) { v.scrollIntoView({ block: 'center' }); if (bar) bar.style.display = 'none'; if (hb) hb.style.display = 'none'; }
+          // 안내 문구가 찍히지 않게 숨긴다
+          for (const t of document.querySelectorAll('[data-tonicstream-toast]')) t.style.display = 'none';
+          await new Promise(r => setTimeout(r, i ? 560 : 300)); // 탭 화면 찍기는 1초에 2번까지
+          const res = await tell({ type: 'capture-visible' });
+          if (!res?.ok) throw new Error(res?.error || '화면을 찍지 못했습니다.');
+          const img = new Image(); img.src = res.dataUrl; await img.decode();
+          // 화면에 보이는 부분만 잘라, 칸 안의 같은 자리에 그린다 (영상이 창보다 크면 보이는 부분만 담긴다)
+          const k = img.width / innerWidth, r = v.getBoundingClientRect();
+          const vx = Math.max(0, r.left), vy = Math.max(0, r.top), vx2 = Math.min(innerWidth, r.right), vy2 = Math.min(innerHeight, r.bottom);
+          if (vx2 - vx > 4 && vy2 - vy > 4) {
+            ctx.drawImage(img, vx * k, vy * k, (vx2 - vx) * k, (vy2 - vy) * k,
+              x + (vx - r.left) / r.width * cw, y + (vy - r.top) / r.height * ch, (vx2 - vx) / r.width * cw, (vy2 - vy) / r.height * ch);
+          }
+        }
+        if (i === 0) {
+          const tc = document.createElement('canvas'); tc.width = 240; tc.height = Math.round(240 * ch / cw);
+          tc.getContext('2d').drawImage(canvas, x, y, cw, ch, 0, 0, tc.width, tc.height);
+          try { thumb = tc.toDataURL('image/jpeg', 0.6); } catch {}
+        }
+        ctx.fillStyle = '#5f5f6b'; ctx.font = `600 13px ${font}`;
+        ctx.fillText(`${i + 1}  ·  ${fmt(t)}`, x + 2, y + ch + 16);
+      }
+    } finally {
+      v.currentTime = was.t;
+      if (!was.paused) v.play().catch(() => {});
+      if (bar) bar.style.display = '';
+      sheeting = false;
+    }
+    const blob = await new Promise((res, rej) => canvas.toBlob(b => (b ? res(b) : rej(new Error('그림을 만들지 못했습니다.'))), 'image/png'));
+    const url = URL.createObjectURL(blob);
+    setTimeout(() => URL.revokeObjectURL(url), 5 * 60_000);
+    const saved = await tell({ type: 'save-blob', url, title: title || document.title, ext: 'png', suffix: '콘티', kind: '콘티 시트', thumb });
+    if (!saved?.ok) {
+      const a = Object.assign(document.createElement('a'), { href: url, download: `${safeName(title || document.title)} 콘티.png` });
+      document.documentElement.appendChild(a); a.click(); a.remove();
+    }
+    return { ok: true, count: n, width: canvas.width, height: canvas.height, screen };
+  }
+
+  // ── 게시물 정보 (보관함에 함께 적는다) ──
+  // 계정 이름, 게시 날짜, 설명(캡션), 해시태그, 조회수·좋아요 수. 페이지에 적힌 공개 정보만 읽는다.
+  function pageMeta() {
+    const m = { author: '', published: '', caption: '', hashtags: [], views: 0, likes: 0 };
+    const meta = sel => document.querySelector(sel)?.content || '';
+    const num = x => { const n = Number(String(x ?? '').replace(/[^\d]/g, '')); return Number.isFinite(n) ? n : 0; };
+    // 1) 검색엔진용 정보(JSON-LD)
+    for (const s of [...document.querySelectorAll('script[type="application/ld+json"]')].slice(0, 10)) {
+      if (s.textContent.length > 300_000) continue;
+      try {
+        const walk = o => {
+          if (!o || typeof o !== 'object') return;
+          if (Array.isArray(o)) return o.forEach(walk);
+          const type = [].concat(o['@type'] || []).join(' ');
+          if (/VideoObject|SocialMediaPosting|Article/i.test(type)) {
+            m.published ||= o.uploadDate || o.datePublished || '';
+            m.caption ||= o.description || o.articleBody || '';
+            const a = [].concat(o.author || o.creator || [])[0];
+            m.author ||= typeof a === 'string' ? a : a?.name || a?.alternateName || '';
+            for (const st of [].concat(o.interactionStatistic || [])) {
+              const kind = String(st?.interactionType?.['@type'] || st?.interactionType || '');
+              if (/Watch/i.test(kind)) m.views ||= num(st.userInteractionCount);
+              if (/Like/i.test(kind)) m.likes ||= num(st.userInteractionCount);
+            }
+          }
+          Object.values(o).forEach(walk);
+        };
+        walk(JSON.parse(s.textContent));
+      } catch {}
+    }
+    // 2) 사이트별로 페이지에 들어 있는 정보
+    const host = location.hostname;
+    try {
+      if (/(^|\.)tiktok\.com$/.test(host)) {
+        const raw = document.getElementById('__UNIVERSAL_DATA_FOR_REHYDRATION__')?.textContent;
+        const item = raw && JSON.parse(raw)?.__DEFAULT_SCOPE__?.['webapp.video-detail']?.itemInfo?.itemStruct;
+        if (item) {
+          m.author ||= item.author?.uniqueId ? `@${item.author.uniqueId}` : '';
+          m.caption ||= item.desc || '';
+          m.published ||= item.createTime ? new Date(item.createTime * 1000).toISOString() : '';
+          m.views ||= num(item.stats?.playCount); m.likes ||= num(item.stats?.diggCount);
+        }
+      }
+      if (/(^|\.)youtube\.com$/.test(host)) {
+        m.author ||= document.querySelector('#owner #channel-name a, ytd-channel-name a')?.textContent?.trim() || '';
+        m.published ||= document.querySelector('meta[itemprop="datePublished"], meta[itemprop="uploadDate"]')?.content || '';
+        m.views ||= num(document.querySelector('meta[itemprop="interactionCount"]')?.content);
+      }
+      if (/(^|\.)instagram\.com$/.test(host)) {
+        // og:description 예: "1,234 likes, 56 comments - 계정 on 2026년 11월 1일: \"캡션\""
+        const og = meta('meta[property="og:description"]');
+        const mm = /^([\d,.]+[KkMm만천]?)\s+likes?.*?-\s*([^\s]+)\s+on\s+([^:]+):\s*"?([\s\S]*?)"?\.?$/.exec(og);
+        if (mm) { m.likes ||= num(mm[1]); m.author ||= `@${mm[2]}`; m.published ||= mm[3].trim(); m.caption ||= mm[4]; }
+      }
+    } catch {}
+    // 3) 공유용 정보
+    m.caption ||= meta('meta[property="og:description"]') || meta('meta[name="description"]');
+    m.author ||= meta('meta[name="author"]') || meta('meta[property="og:site_name"]');
+    m.published ||= meta('meta[property="article:published_time"]') || meta('meta[property="og:video:release_date"]');
+    m.caption = String(m.caption).replace(/\s+/g, ' ').trim().slice(0, 600);
+    m.author = String(m.author).trim().slice(0, 80);
+    m.published = String(m.published).trim().slice(0, 40);
+    m.hashtags = [...new Set((m.caption.match(/#[\p{L}\p{N}_]+/gu) || []).map(t => t.slice(1)))].slice(0, 20);
+    return m;
+  }
+
   function stopRecording(id) {
     const rec = recs.get(id);
     if (rec && rec.recorder.state !== 'inactive') rec.recorder.stop();
@@ -575,7 +733,40 @@ if (!(() => { try { return typeof window.__tonicstream === 'function' && window.
   }, { passive: true, capture: true });
   addEventListener('scroll', hideHover, { passive: true, capture: true });
 
+  // 우클릭한 자리의 영상을 기억해 둔다 (영상 위에 다른 요소가 덮여 있는 사이트가 많아 겹친 것들 중에서 찾는다)
+  let ctxVideo = null;
+  addEventListener('contextmenu', e => {
+    ctxVideo = document.elementsFromPoint(e.clientX, e.clientY).find(x => x.tagName === 'VIDEO') || null;
+  }, { capture: true, passive: true });
+
+  async function ctxAction(action, title) {
+    if (action === 'meta') return pageMeta();
+    const v = ctxVideo?.isConnected ? ctxVideo : null;
+    if (!v) { toast('영상 위에서 마우스 오른쪽 버튼을 눌러 주세요.'); return { ok: false, error: 'no-video' }; }
+    const id = idOf(v);
+    if (action === 'save') { const r = await saveFromPage(v); toast(r.ok ? (r.text === '녹화 시작' ? '녹화를 시작했습니다. 위의 "정지 후 저장"을 누르면 저장됩니다.' : '원본 파일을 저장했습니다.') : `저장하지 못했습니다: ${r.error}`); return r; }
+    if (action === 'record') { await startRecording(id, Number.isFinite(v.duration), title); toast('처음부터 녹화합니다. 끝나면 자동으로 저장됩니다.'); return { ok: true }; }
+    if (action === 'shot') { if (hb) hb.style.display = 'none'; return snapshot(id, title); }
+    if (action === 'sheet') {
+      toast('콘티를 만드는 중입니다. 끝날 때까지 탭을 그대로 두세요…');
+      const r = await contactSheet(id, title);
+      toast(`콘티 시트를 저장했습니다. (${r.count}장면)`);
+      return r;
+    }
+    return { ok: false };
+  }
+
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (msg.type === 'ctx') {
+      ctxAction(msg.action, msg.title).then(sendResponse, e => { toast(e.message); sendResponse({ ok: false, error: e.message }); });
+      return true;
+    }
+    if (msg.type === 'meta') { if (window !== top) return; sendResponse(pageMeta()); return; }
+    if (msg.type === 'sheet') {
+      if (hb) hb.style.display = 'none';
+      contactSheet(msg.id, msg.title).then(sendResponse, e => sendResponse({ ok: false, error: e.message }));
+      return true;
+    }
     if (msg.type === 'capture-page') {
       if (window !== top) return;
       capturePage(msg.title).then(sendResponse, e => sendResponse({ ok: false, error: e.message }));

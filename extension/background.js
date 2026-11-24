@@ -220,7 +220,7 @@ chrome.webRequest.onHeadersReceived.addListener(
 // 확장 자체 화면(팝업·보관함·녹화 창·숨겨진 페이지)에서만 받는 요청. 웹페이지에 들어간 content.js가 보낸 것은 거절한다.
 const captureTabs = new Set(); // 페이지 전체 캡처가 진행 중인 탭
 const EXT_ONLY = new Set(['capture-start', 'tabrec-start', 'tabrec-stop', 'tabrec-ended', 'download', 'shot-tab', 'log-save', 'library-update', 'probe-media',
-  'hls-start', 'hls-cancel', 'hls-stop', 'hls-probe', 'hls-progress', 'hls-done', 'add-streams']);
+  'library-import', 'hls-start', 'hls-cancel', 'hls-stop', 'hls-probe', 'hls-progress', 'hls-done', 'add-streams']);
 const SAVE_EXTS = new Set(['mp4', 'm4v', 'webm', 'mov', 'ogv', 'mkv', 'png', 'm4a', 'weba']);
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
@@ -312,7 +312,11 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     const t = _sender.tab;
     if (!t || !captureTabs.has(t.id)) { sendResponse({ ok: false, error: '캡처가 시작되지 않았습니다.' }); return; }
     chrome.tabs.query({ active: true, windowId: t.windowId })
-      .then(([active]) => { if (active?.id !== t.id) throw new Error('캡처하는 동안 이 탭을 그대로 띄워 두어야 합니다.'); return chrome.tabs.captureVisibleTab(t.windowId, { format: 'png' }); })
+      .then(([active]) => { if (active?.id !== t.id) throw new Error('캡처하는 동안 이 탭을 그대로 띄워 두어야 합니다.'); return chrome.tabs.captureVisibleTab(t.windowId, { format: 'png' }).catch(async e => {
+        if (!/MAX_CAPTURE|quota/i.test(e.message)) throw e;
+        await new Promise(r => setTimeout(r, 1100));
+        return chrome.tabs.captureVisibleTab(t.windowId, { format: 'png' });
+      }); })
       .then(dataUrl => sendResponse({ ok: true, dataUrl }), e => sendResponse({ ok: false, error: e.message }));
     return true;
   }
@@ -321,6 +325,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true;
   }
   if (msg.type === 'log-save') { logSave(msg.entry); return; }
+  // 보관함 백업 파일 가져오기: 같은 기록(id)은 건너뛰고 새 것만 더한다
+  if (msg.type === 'library-import') { importLibrary(msg.items).then(sendResponse, e => sendResponse({ ok: false, error: e.message })); return true; }
   if (msg.type === 'library-update') {
     // 전체 삭제는 clearAll로만. id가 빠진 요청이 전체 삭제로 읽히지 않게 한다.
     if (!msg.clearAll && typeof msg.id !== 'string') { sendResponse({ ok: false }); return; }
@@ -618,6 +624,59 @@ chrome.windows.onRemoved.addListener(async windowId => {
 chrome.runtime.onStartup.addListener(refreshAction);
 chrome.runtime.onInstalled.addListener(refreshAction);
 
+// ── 우클릭 메뉴 ──
+// 팝업을 열지 않고 영상 위에서 바로 저장·녹화·캡처한다. 영상이 다른 요소에 덮여 있어도 되도록 모든 곳에 메뉴를 띄우고,
+// 실제 영상은 페이지(content.js)가 우클릭한 자리에서 찾는다.
+const CTX = [
+  ['save', '이 영상 저장 (원본이 있으면 원본, 없으면 녹화)'],
+  ['record', '이 영상 처음부터 녹화'],
+  ['shot', '지금 장면 캡처 (PNG)'],
+  ['sheet', '장면 콘티 시트 만들기'],
+  ['sep', ''],
+  ['page', '페이지 전체 캡처'],
+  ['library', '보관함 열기'],
+];
+function setupMenus() {
+  chrome.contextMenus.removeAll(() => {
+    chrome.contextMenus.create({ id: 'ts', title: 'Tonicstream', contexts: ['all'], documentUrlPatterns: ['http://*/*', 'https://*/*', 'file://*/*'] });
+    for (const [id, title] of CTX) {
+      chrome.contextMenus.create(id === 'sep' ? { id: 'ts-sep', parentId: 'ts', type: 'separator', contexts: ['all'] }
+        : { id: `ts-${id}`, parentId: 'ts', title, contexts: ['all'] });
+    }
+  });
+}
+chrome.runtime.onInstalled.addListener(setupMenus);
+chrome.runtime.onStartup.addListener(setupMenus);
+
+chrome.contextMenus.onClicked.addListener((info, tab) => { onMenu(info, tab); });
+async function onMenu(info, tab) {
+  const action = String(info.menuItemId).replace(/^ts-/, '');
+  if (action === 'library') return chrome.tabs.create({ url: 'library.html' });
+  if (!tab?.id || tab.id < 0) return;
+  const frameId = info.frameId || 0;
+  if (action === 'page' || action === 'sheet') captureTabs.add(tab.id); // 탭 화면을 찍을 수 있게 허락 (끝나면 거둔다)
+  try {
+    if (action === 'page') {
+      await chrome.tabs.sendMessage(tab.id, { type: 'capture-page', title: tab.title }, { frameId: 0 });
+      return;
+    }
+    const send = () => chrome.tabs.sendMessage(tab.id, { type: 'ctx', action, title: tab.title }, { frameId });
+    // 확장을 설치하기 전에 열어 둔 탭에는 content.js가 없다. 넣은 뒤 한 번 더 시도한다 (이때는 우클릭 위치를 몰라 안내만 뜬다).
+    const res = await send().catch(async () => {
+      await chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, files: ['content.js'] });
+      return send();
+    });
+    // 다른 도메인 영상의 장면 캡처: 그림을 꺼낼 수 없어 탭 화면을 찍어 영상 부분만 자른다
+    if (action === 'shot' && res?.fallback) {
+      await shotTab({ tabId: tab.id, windowId: tab.windowId, vw: res.vw, rect: res.top ? res.rect : null, title: tab.title, pageUrl: tab.url, suffix: res.suffix });
+    }
+  } catch (e) {
+    console.warn('우클릭 메뉴 실행 실패', e); // 이 페이지에 content.js가 없는 경우(확장 설치 전에 연 탭 등)
+  } finally {
+    if (action === 'page' || action === 'sheet') captureTabs.delete(tab.id);
+  }
+}
+
 // 녹화 중일 때만 호출됨 (평소엔 팝업이 열림)
 async function stopFromAction(tab) {
   const { tabRec, screenRec, videoRecs = {} } = await chrome.storage.session.get(['tabRec', 'screenRec', 'videoRecs']);
@@ -649,7 +708,12 @@ async function shotTab({ tabId, windowId, rect, vw, title, pageUrl, suffix }) {
   // 찍히는 것은 창에서 지금 보이는 탭이므로, 대상 탭이 맞는지 먼저 확인
   const [active] = await chrome.tabs.query({ active: true, windowId });
   if (tabId != null && active?.id !== tabId) throw new Error('영상이 있는 탭이 화면에 보이지 않습니다.');
-  let dataUrl = await chrome.tabs.captureVisibleTab(windowId, { format: 'png' });
+  // 브라우저는 탭 화면 찍기를 1초에 2번까지만 허락한다. 바로 앞에서 찍었으면(콘티 시트 등) 잠깐 기다렸다가 다시 찍는다.
+  let dataUrl = await chrome.tabs.captureVisibleTab(windowId, { format: 'png' }).catch(async e => {
+    if (!/MAX_CAPTURE|quota/i.test(e.message)) throw e;
+    await new Promise(r => setTimeout(r, 1100));
+    return chrome.tabs.captureVisibleTab(windowId, { format: 'png' });
+  });
   if (rect) {
     const img = await createImageBitmap(await (await fetch(dataUrl)).blob());
     const dpr = vw ? img.width / vw : 1; // 찍힌 그림과 페이지 좌표의 비율 (화면 배율·확대/축소 반영)
@@ -689,8 +753,26 @@ async function makeThumb(dataUrl) {
 const LIBRARY_MAX = 300;
 const LIBRARY_HARD_MAX = 600; // 표시해 둔 기록만으로 이 수를 넘으면 그때는 가장 오래된 것부터 지운다
 let libraryQueue = Promise.resolve();
+// 저장한 페이지가 아직 열려 있으면 게시물 정보(계정·게시일·캡션·해시태그·조회수)를 받아 온다
+async function metaOf(pageUrl) {
+  if (!/^https?:/.test(pageUrl || '')) return null;
+  try {
+    const tabs = (await chrome.tabs.query({})).filter(t => t.url === pageUrl);
+    const t = tabs.find(x => x.active) || tabs[0];
+    if (!t) return null;
+    const m = await Promise.race([chrome.tabs.sendMessage(t.id, { type: 'meta' }, { frameId: 0 }), new Promise(r => setTimeout(() => r(null), 1500))]);
+    if (!m || typeof m !== 'object') return null;
+    const str = (x, n) => String(x ?? '').slice(0, n);
+    const out = { author: str(m.author, 80), published: str(m.published, 40), caption: str(m.caption, 600),
+      hashtags: (Array.isArray(m.hashtags) ? m.hashtags : []).map(h => str(h, 40)).slice(0, 20),
+      views: Number(m.views) > 0 ? Math.round(Number(m.views)) : 0, likes: Number(m.likes) > 0 ? Math.round(Number(m.likes)) : 0 };
+    return out.author || out.published || out.caption || out.views || out.likes ? out : null;
+  } catch { return null; }
+}
+
 function logSave(entry) {
   if (entry.incognito) return libraryQueue; // 시크릿 창에서 저장한 것은 기록하지 않는다
+  const metaP = metaOf(entry.pageUrl).catch(() => null); // 대기열 밖에서 미리 받아 둔다 (다른 기록을 늦추지 않게)
   libraryQueue = libraryQueue.then(async () => {
     const naming = await getNaming();
     if (!naming.library) return;
@@ -704,6 +786,7 @@ function logSave(entry) {
       // 미리보기는 보통 2~10KB. 저장 공간(브라우저 한도 약 10MB)을 넘지 않게 큰 것은 버린다
       thumb: (entry.thumb || '').length <= THUMB_MAX ? entry.thumb || '' : '', memo: '', tags: '',
       board: String(naming.board || '').slice(0, 40), rating: 0,
+      ...(await metaP.then(meta => (meta ? { meta } : {}))),
     });
     // 한도를 넘으면 표시(보드·별점·메모·태그)가 없는 오래된 기록부터 지운다. 정리해 둔 기록은 최대한 남긴다.
     const marked = x => x.board || x.rating || x.memo || x.tags;
@@ -755,6 +838,35 @@ chrome.downloads.onChanged.addListener(d => {
     await chrome.storage.local.set({ library: next });
   }).catch(e => console.warn('보관함 수정 실패', e));
 });
+
+// 백업 파일의 기록을 검사해 들여온다. 모양이 이상한 값은 버리고, 그림은 데이터 주소(data:image)만 받는다.
+function importLibrary(list) {
+  let added = 0;
+  libraryQueue = libraryQueue.then(async () => {
+    if (!Array.isArray(list)) throw new Error('보관함 백업 파일이 아닙니다.');
+    const { library = [] } = await chrome.storage.local.get('library');
+    const have = new Set(library.map(x => x.id));
+    const str = (x, n) => String(x ?? '').slice(0, n);
+    for (const x of list.slice(0, LIBRARY_HARD_MAX)) {
+      if (!x || typeof x !== 'object' || typeof x.id !== 'string' || have.has(x.id)) continue;
+      const m = x.meta && typeof x.meta === 'object' ? x.meta : null;
+      library.push({
+        id: str(x.id, 64), ts: Number(x.ts) || Date.now(), kind: str(x.kind, 40), title: str(x.title, 200),
+        pageUrl: /^https?:/.test(x.pageUrl || '') ? str(x.pageUrl, 2000) : '', site: str(x.site, 100), filename: str(x.filename, 300),
+        downloadId: null, thumb: /^data:image\/(jpeg|png|webp);base64,/.test(x.thumb || '') && x.thumb.length <= THUMB_MAX ? x.thumb : '',
+        memo: str(x.memo, 500), tags: str(x.tags, 200), board: str(x.board, 40).trim(), rating: Math.max(0, Math.min(5, Math.round(Number(x.rating) || 0))),
+        ...(m ? { meta: { author: str(m.author, 80), published: str(m.published, 40), caption: str(m.caption, 600),
+          hashtags: (Array.isArray(m.hashtags) ? m.hashtags : []).map(h => str(h, 40)).slice(0, 20), views: Number(m.views) || 0, likes: Number(m.likes) || 0 } } : {}),
+      });
+      have.add(x.id); added++;
+    }
+    library.sort((a, b) => b.ts - a.ts);
+    await saveLibrary(library.slice(0, LIBRARY_HARD_MAX));
+  });
+  const p = libraryQueue.then(() => ({ ok: true, added }));
+  libraryQueue = libraryQueue.catch(e => console.warn('보관함 가져오기 실패', e));
+  return p;
+}
 
 function updateLibrary(id, change) {
   libraryQueue = libraryQueue.then(async () => {
