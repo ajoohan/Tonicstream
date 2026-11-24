@@ -439,12 +439,15 @@ async function maybeCloseOffscreen() {
 }
 
 const offscreenBlobs = new Map(); // 다운로드 번호 → 숨겨진 페이지가 만든 임시 주소
-chrome.downloads.onChanged.addListener(d => {
-  if (d.state && d.state.current !== 'in_progress' && offscreenBlobs.has(d.id)) {
-    chrome.runtime.sendMessage({ type: 'offscreen-revoke', url: offscreenBlobs.get(d.id) }).catch(() => {});
+chrome.downloads.onChanged.addListener(async d => {
+  if (!d.state || d.state.current === 'in_progress') return;
+  if (offscreenBlobs.has(d.id)) {
+    const url = offscreenBlobs.get(d.id);
     offscreenBlobs.delete(d.id);
+    // 스트리밍 결과는 디스크의 임시 파일이다. 지워졌다는 답을 받은 뒤에 숨겨진 페이지를 닫아야 파일이 남지 않는다.
+    await chrome.runtime.sendMessage({ type: 'offscreen-revoke', url }).catch(() => {});
   }
-  if (d.state && d.state.current !== 'in_progress') maybeCloseOffscreen();
+  maybeCloseOffscreen();
 });
 
 // ── 탭 전체 녹화 ─────────────────────────────────────────
@@ -901,7 +904,8 @@ async function hlsDone(res) {
       blobUrl = '';
       offscreenBlobs.set(id, res.url); // 저장이 끝나면 숨겨진 페이지가 잡고 있는 데이터(디스크의 임시 파일 포함)를 놓아 준다
       logSave({ kind: res.live ? '생방송 받기' : '스트리밍 다운로드', title: j.title, pageUrl: j.pageUrl, filename, downloadId: id, thumb: '', incognito: j.incognito });
-      return { ...j, state: 'done', size: res.size, seconds: res.seconds, quality: res.quality, partial: !!res.partial, live: !!res.live, endedAt: Date.now() };
+      return { ...j, state: 'done', size: res.size, seconds: res.seconds, quality: res.quality, partial: !!res.partial, live: !!res.live,
+        note: typeof res.note === 'string' ? res.note : '', endedAt: Date.now() };
     } catch (e) { return hlsFail(j, e.message); }
   });
   // 저장으로 이어지지 않은 결과물은 바로 놓아 준다
