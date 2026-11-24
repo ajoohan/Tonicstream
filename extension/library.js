@@ -42,6 +42,15 @@ function stars(it) {
   return box;
 }
 
+// 게시물 정보(계정·게시일·조회수·좋아요·캡션·해시태그) 한 줄 요약
+const fmtNum = n => (n >= 1e8 ? `${(n / 1e8).toFixed(1)}억` : n >= 1e4 ? `${(n / 1e4).toFixed(1)}만` : n.toLocaleString('ko-KR'));
+const fmtPub = s => { const d = new Date(s); return Number.isNaN(d.getTime()) ? s : `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
+function metaLine(m) {
+  if (!m) return '';
+  return [m.author, m.published && `게시 ${fmtPub(m.published)}`, m.views && `조회 ${fmtNum(m.views)}`, m.likes && `좋아요 ${fmtNum(m.likes)}`].filter(Boolean).join(' · ');
+}
+const metaText = m => (m ? [m.author, m.caption, (m.hashtags || []).map(h => '#' + h).join(' ')].join(' ') : '');
+
 function card(it) {
   const thumb = el('div', { className: 'thumb', textContent: it.thumb ? '' : '미리보기 없음' });
   if (it.thumb.startsWith('data:image/')) thumb.style.backgroundImage = `url("${it.thumb}")`;
@@ -58,6 +67,10 @@ function card(it) {
       el('div', { className: 'title', textContent: it.title || it.filename, title: it.filename }),
       el('div', { className: 'sub' }, el('span', { className: 'kind', textContent: it.kind }), `${fmtDate(it.ts)}${it.site ? ' · ' + it.site : ''}`),
       el('div', { className: 'file', textContent: it.filename, title: '저장된 파일 이름' }),
+      ...(it.meta ? [el('div', { className: 'post' },
+        el('div', { className: 'pline', textContent: metaLine(it.meta) }),
+        ...(it.meta.caption ? [el('div', { className: 'cap', textContent: it.meta.caption, title: it.meta.caption })] : []),
+        ...(it.meta.hashtags?.length ? [el('div', { className: 'hash', textContent: it.meta.hashtags.map(h => '#' + h).join(' ') })] : []))] : []),
       stars(it), board, tags, memo, acts));
 }
 
@@ -68,7 +81,7 @@ function shown() {
     (view.board === null || boardOf(it) === view.board) &&
     (!view.kind || it.kind === view.kind) &&
     ratingOf(it) >= view.minRating &&
-    (!q || [it.title, it.site, it.tags, it.memo, it.kind, it.filename, boardOf(it)].join(' ').toLowerCase().includes(q)));
+    (!q || [it.title, it.site, it.tags, it.memo, it.kind, it.filename, boardOf(it), metaText(it.meta)].join(' ').toLowerCase().includes(q)));
   return view.sort === 'rating' ? [...list].sort((a, b) => ratingOf(b) - ratingOf(a) || b.ts - a.ts) : list;
 }
 
@@ -107,8 +120,9 @@ function saveFile(text, type, name) {
 function exportCsv() {
   // =, +, -, @ 로 시작하는 칸은 엑셀이 수식으로 실행할 수 있어서 앞에 '를 붙여 글자로 읽히게 한다
   const cell = v => { const s = String(v ?? ''); return `"${(/^[=+\-@\t\r]/.test(s) ? "'" + s : s).replace(/"/g, '""')}"`; };
-  const rows = [['날짜', '종류', '제목', '사이트', '원본 주소', '파일', '보드', '별점', '태그', '메모'],
-    ...shown().map(it => [fmtDate(it.ts), it.kind, it.title, it.site, it.pageUrl, it.filename, boardOf(it), ratingOf(it) || '', it.tags, it.memo])];
+  const rows = [['날짜', '종류', '제목', '사이트', '원본 주소', '파일', '보드', '별점', '태그', '메모', '계정', '게시일', '조회수', '좋아요', '캡션', '해시태그'],
+    ...shown().map(it => { const m = it.meta || {}; return [fmtDate(it.ts), it.kind, it.title, it.site, it.pageUrl, it.filename, boardOf(it), ratingOf(it) || '', it.tags, it.memo,
+      m.author, m.published ? fmtPub(m.published) : '', m.views || '', m.likes || '', m.caption, (m.hashtags || []).map(h => '#' + h).join(' ')]; })];
   // 엑셀에서 한글이 깨지지 않도록 맨 앞에 BOM을 붙인다
   saveFile('﻿' + rows.map(r => r.map(cell).join(',')).join('\r\n'), 'text/csv;charset=utf-8', `tonicstream-보관함-${stamp()}.csv`);
 }
@@ -125,6 +139,9 @@ function exportHtml() {
       <h2>${esc(it.title || it.filename)}</h2>
       <p class="meta"><span class="kind">${esc(it.kind)}</span> ${esc(fmtDate(it.ts))}${it.site ? ' · ' + esc(it.site) : ''}${ratingOf(it) ? ` · <span class="stars">${'★'.repeat(ratingOf(it))}</span>` : ''}</p>
       ${boardOf(it) ? `<p class="meta">보드: ${esc(boardOf(it))}</p>` : ''}
+      ${metaLine(it.meta) ? `<p class="meta">${esc(metaLine(it.meta))}</p>` : ''}
+      ${it.meta?.caption ? `<p class="cap">${esc(it.meta.caption)}</p>` : ''}
+      ${it.meta?.hashtags?.length ? `<p class="tags">${it.meta.hashtags.map(h => `<span>#${esc(h)}</span>`).join(' ')}</p>` : ''}
       ${it.tags ? `<p class="tags">${it.tags.split(',').map(t => t.trim()).filter(Boolean).map(t => `<span>#${esc(t)}</span>`).join(' ')}</p>` : ''}
       ${it.memo ? `<p class="memo">${esc(it.memo)}</p>` : ''}
       ${/^https?:\/\//.test(it.pageUrl) ? `<p><a href="${esc(it.pageUrl)}" target="_blank" rel="noopener noreferrer">원본 페이지 열기</a></p>` : ''}
@@ -145,7 +162,7 @@ function exportHtml() {
   h2 { font-size: 16px; margin: 0 0 4px; word-break: break-all; } p { margin: 4px 0; }
   .meta, .file { color: #5f5f6b; font-size: 13px; } .file { word-break: break-all; }
   .kind { color: #e5484d; border: 1px solid #e5484d; border-radius: 999px; padding: 0 7px; font-size: 12px; font-weight: 700; }
-  .stars { color: #e5a000; } .tags span { color: #3b5bdb; margin-right: 4px; } .memo { background: #f6f6f9; border-radius: 8px; padding: 6px 9px; }
+  .cap { font-size: 13.5px; color: #3a3a44; } .stars { color: #e5a000; } .tags span { color: #3b5bdb; margin-right: 4px; } .memo { background: #f6f6f9; border-radius: 8px; padding: 6px 9px; }
   a { color: #e5484d; font-weight: 600; }
   @media (max-width: 520px) { .grid { grid-template-columns: 1fr; } }
 </style></head><body><main>
@@ -184,6 +201,23 @@ $('#f-kind').onchange = e => { view.kind = e.target.value; render(); };
 $('#f-rating').onchange = e => { view.minRating = Number(e.target.value); render(); };
 $('#f-sort').onchange = e => { view.sort = e.target.value; render(); };
 $('#csv').onclick = exportCsv;
+// 백업: 보관함 전체(미리보기 그림 포함)를 파일 하나로. 다른 PC나 새로 설치한 확장으로 옮길 때 쓴다.
+$('#backup').onclick = () => {
+  saveFile(JSON.stringify({ app: 'tonicstream-library', version: 1, exportedAt: new Date().toISOString(), items }), 'application/json', `tonicstream-보관함-백업-${stamp()}.json`);
+  say(`기록 ${items.length}개를 백업 파일로 저장했습니다.`);
+};
+$('#restore').onclick = () => $('#restore-file').click();
+$('#restore-file').onchange = async e => {
+  const f = e.target.files[0];
+  e.target.value = '';
+  if (!f) return;
+  try {
+    const data = JSON.parse(await f.text());
+    if (data?.app !== 'tonicstream-library' || !Array.isArray(data.items)) throw new Error('Tonicstream 보관함 백업 파일이 아닙니다.');
+    const res = await chrome.runtime.sendMessage({ type: 'library-import', items: data.items });
+    say(res?.ok ? `${res.added}개를 가져왔습니다.${data.items.length - res.added ? ` (이미 있는 ${data.items.length - res.added}개는 건너뜀)` : ''}` : `가져오지 못했습니다: ${res?.error || ''}`);
+  } catch (err) { say(`가져오지 못했습니다: ${err.message}`); }
+};
 $('#html').onclick = exportHtml;
 $('#clear').onclick = async () => {
   if (items.length && confirm(`기록 ${items.length}개를 모두 지울까요? 영상 파일은 지워지지 않습니다.`)) await chrome.runtime.sendMessage({ type: 'library-update', clearAll: true });

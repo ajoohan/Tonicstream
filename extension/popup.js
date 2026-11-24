@@ -81,6 +81,7 @@ function videoCard(v, i) {
     }
   }
   row.append(el('button', { textContent: '장면 캡처', title: '지금 보이는 장면을 PNG 이미지로 저장', onclick: () => snapshot(v) }));
+  if (!v.recording && v.duration > 2) row.append(el('button', { textContent: '콘티 시트', title: '영상 전체에서 장면 12개를 뽑아 한 장짜리 그리드 PNG로 저장', onclick: () => sheet(v) }));
   if (!v.recording && !(v.crossOrigin && v.directSrc)) {
     row.append(el('button', { textContent: '소리만 저장', title: '화면 없이 소리만 녹음해 저장 (배경음악·내레이션)',
       onclick: () => send(v.frameId, { type: 'record', id: v.id, fromStart: v.duration != null, title: tab.title, audioOnly: true }) }));
@@ -121,6 +122,17 @@ async function snapshot(v) {
   const shot = await chrome.runtime.sendMessage({ type: 'shot-tab', tabId: tab.id, windowId: tab.windowId, vw: res.vw,
     rect: res.top ? res.rect : null, title: tab.title, pageUrl: tab.url, suffix: res.suffix });
   say(shot?.ok ? (res.top ? '장면을 저장했습니다. (화면에 보이는 크기)' : '장면을 저장했습니다. (탭 화면 전체)') : `장면 캡처 실패: ${shot?.error || ''}`);
+}
+
+// 장면 콘티 시트: 영상에서 고르게 장면을 뽑아 한 장으로. 보호된 영상이면 탭 화면을 찍어 만들므로 그동안 탭을 그대로 두어야 한다.
+async function sheet(v) {
+  say('콘티를 만드는 중입니다. 끝날 때까지 탭을 그대로 두세요…');
+  await chrome.runtime.sendMessage({ type: 'capture-start', tabId: tab.id });
+  const res = await chrome.tabs.sendMessage(tab.id, { type: 'sheet', id: v.id, title: tab.title }, { frameId: v.frameId })
+    .catch(e => ({ ok: false, error: e.message }));
+  chrome.runtime.sendMessage({ type: 'capture-end', tabId: tab.id }).catch(() => {});
+  say(res?.ok ? `콘티 시트를 저장했습니다. (${res.count}장면${res.screen ? ', 화면을 찍어 만듦' : ''})` : `콘티를 만들지 못했습니다: ${res?.error || ''}`);
+  setTimeout(render, 300);
 }
 
 function fileCard(f, i, all) {

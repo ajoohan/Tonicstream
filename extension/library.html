@@ -16,9 +16,12 @@
         <p class="meta" id="count"></p>
       </div>
       <div class="tools">
-        <input id="q" type="text" placeholder="제목 · 사이트 · 보드 · 태그 · 메모 검색" spellcheck="false">
+        <input id="q" type="text" placeholder="제목 · 계정 · 해시태그 · 보드 · 메모 검색" spellcheck="false">
         <button id="html" title="지금 보이는 기록을 한 장짜리 HTML 파일로 저장 (팀 전달용)">HTML 내보내기</button>
         <button id="csv" title="지금 보이는 기록을 엑셀용 CSV로 저장">CSV 내보내기</button>
+        <button id="backup" title="보관함 전체를 백업 파일로 저장 (다른 PC나 새로 설치한 확장으로 옮길 때)">백업</button>
+        <button id="restore" title="백업 파일에서 기록을 가져옵니다. 이미 있는 기록은 건너뜁니다">가져오기</button>
+        <input type="file" id="restore-file" accept=".json,application/json" hidden>
         <button id="clear">전체 삭제</button>
       </div>
     </header>

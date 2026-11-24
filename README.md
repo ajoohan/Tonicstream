@@ -86,3 +86,10 @@ main에 푸시하면 GitHub Actions(`.github/workflows/pages.yml`)가 `extension
 4. 스토어에 올릴 때는 `store/README.md`의 버전과 문구를 직접 고칩니다.
 
 ZIP으로 설치한 사용자는 팝업을 열 때(12시간에 한 번) `version.json`을 확인해, 더 새 버전이 있으면 팝업 맨 위에 알림을 봅니다. 알림의 버튼은 소개 페이지의 업데이트 안내(`#update`)로 연결됩니다. 스토어에서 설치한 사용자는 브라우저가 자동으로 업데이트합니다.
+
+## 회사 PC 자동 업데이트
+
+배포할 때 `scripts/pack-crx.mjs`가 서명한 설치 파일(`tonicstream.crx`)과 업데이트 안내 파일(`updates.xml`)을 사이트에 함께 올립니다. 서명 열쇠는 저장소 비밀값 `CRX_PRIVATE_KEY`(Settings → Secrets and variables → Actions)에 넣어 두며, 없으면 이 단계는 건너뛰고 ZIP만 배포합니다.
+
+- 확장 ID는 서명 열쇠로 정해집니다(`feeaeacfnjjglkpblombicpdecfdghfp`). 열쇠를 잃거나 바꾸면 ID가 바뀌어 IT 정책을 다시 설정해야 하므로, 열쇠 파일은 안전한 곳에 따로 보관합니다. 열쇠를 저장소에 커밋하지 않습니다.
+- IT 담당자용 설정 안내: `docs/it.html` (https://stream.plustonic.com/it.html)
