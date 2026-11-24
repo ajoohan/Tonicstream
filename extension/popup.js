@@ -166,8 +166,9 @@ async function probeStream(stream) {
   probing = true;
   const res = await chrome.runtime.sendMessage({ type: 'hls-probe', tabId: tab.id, pageUrl: tab.url, hint: mainDuration }).catch(() => null);
   probing = false;
-  if (res?.busy) return; // 다른 영상을 받는 중
-  probed = { key, ...(res || { ok: false, error: '목록을 읽지 못했습니다.' }) };
+  // 다른 영상을 받는 중이면 화질을 알아볼 수 없다. 그 작업이 끝난 뒤 다시 그릴 때 다시 알아본다.
+  probed = res?.busy ? { key, ok: false, busy: true, error: '다른 영상을 받는 중이라 화질을 확인하지 못했습니다.' }
+    : { key, ...(res || { ok: false, error: '목록을 읽지 못했습니다.' }) };
   if (probed.ok) pick = { variant: probed.variant, audio: probed.audio };
   if (!pressing) renderFiles();
 }
@@ -200,8 +201,9 @@ function streamCard(stream) {
   } else if (any && !mine) {
     info = '다른 탭의 스트리밍 영상을 받는 중입니다. 끝난 뒤에 받을 수 있습니다.';
   } else {
-    if (job?.state === 'done') info = `저장했습니다${job.partial ? '(일부)' : ''} · ${fmtSize(job.size)}${job.quality ? ' · ' + job.quality : ''} · ${fmtTime(job.seconds)}`;
+    if (job?.state === 'done') info = `저장했습니다${job.partial ? '(일부)' : ''} · ${fmtSize(job.size)}${job.quality ? ' · ' + job.quality : ''} · ${fmtTime(job.seconds)}${job.note ? ` · ${job.note}` : ''}`;
     if (job?.state === 'error') info = `받지 못했습니다: ${job.error}`;
+    if (probed?.busy && !any) probed = null; // 막고 있던 작업이 끝났으니 다시 알아본다
     probeStream(stream);
     const p = probed?.key?.startsWith(`${tab.url}|`) ? probed : null;
     if (p?.ok) {
@@ -276,7 +278,8 @@ async function renderFiles(files, stream) {
   $('#files').replaceChildren(...(cards.length ? cards : [el('p', { className: 'empty', textContent: none })]));
   // 스트리밍을 받는 동안에는 진행률이 보이도록 이 목록만 주기적으로 다시 그린다
   clearTimeout(filesTimer);
-  if (stream?.job?.state === 'running' && stream.job.tabId === tab.id) filesTimer = setTimeout(() => (pressing ? null : renderFiles()), 700);
+  // 다른 탭의 작업이 끝나기를 기다리는 중이면 가끔 다시 그려, 끝나는 대로 이 탭에서도 받을 수 있게 한다
+  if (stream?.job?.state === 'running') filesTimer = setTimeout(() => (pressing ? null : renderFiles()), stream.job.tabId === tab.id ? 700 : 2000);
 }
 
 async function download(url, type = '', v = null, suffix = '') {
