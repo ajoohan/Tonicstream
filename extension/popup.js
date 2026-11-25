@@ -448,9 +448,30 @@ function isNewer(a, b) {
   }
   return false;
 }
+// 새 버전 알림. 압축 푼 폴더로 설치한 경우(installType: development)에만 보여 준다.
+// 회사 정책으로 설치한 경우는 브라우저가 알아서 업데이트한다.
+//  1) 폴더의 파일이 이미 새 버전으로 바뀌어 있으면(업데이트 도우미를 실행한 뒤) → [지금 적용]으로 다시 불러온다
+//  2) 사이트에 새 버전이 있으면 → 업데이트 도우미(Tonicstream-update.cmd)를 실행하라고 안내한다
 async function checkUpdate() {
   const manifest = chrome.runtime.getManifest();
-  if (manifest.update_url) return;
+  const self = await chrome.management.getSelf().catch(() => null);
+  if (self && self.installType !== 'development') return;
+  const disk = await fetch(chrome.runtime.getURL('manifest.json'), { cache: 'no-store' }).then(r => r.json()).catch(() => null);
+  if (disk && VERSION_RE.test(String(disk.version)) && isNewer(disk.version, manifest.version)) {
+    $('#update-title').textContent = `새 버전 ${disk.version} 파일이 준비됐습니다 (지금 ${manifest.version})`;
+    $('#update-notes').replaceChildren(el('li', { textContent: '[지금 적용]을 누르면 확장이 새 버전으로 다시 켜집니다. 열려 있던 Tonicstream 창은 닫힙니다.' }),
+      el('li', { textContent: '적용되지 않으면 Edge를 모두 닫았다가 다시 여세요.' }));
+    $('#update-get').textContent = '지금 적용';
+    $('#update-get').onclick = async () => {
+      const s = await chrome.storage.session.get(['tabRec', 'screenRec', 'videoRecs', 'hlsJob']);
+      const busy = s.tabRec || s.screenRec || Object.values(s.videoRecs || {}).some(f => f?.length) || s.hlsJob?.state === 'running';
+      if (busy) return say('녹화나 스트리밍 받기가 끝난 뒤에 적용해 주세요.');
+      chrome.runtime.reload();
+    };
+    $('#update-later').onclick = () => { $('#update').hidden = true; };
+    $('#update').hidden = false;
+    return;
+  }
   let { updateCheck } = await chrome.storage.local.get('updateCheck');
   if (!updateCheck || Date.now() - updateCheck.at > 12 * 3600_000) {
     // 확인에 실패해도(인터넷 끊김, 사이트 응답 없음, 잘못된 내용) 확인 시각은 남겨서 12시간 안에 다시 묻지 않는다.
@@ -468,7 +489,9 @@ async function checkUpdate() {
   if (!VERSION_RE.test(updateCheck.latest || '') || !isNewer(updateCheck.latest, manifest.version)) return;
   if (updateCheck.dismissed === updateCheck.latest) return; // "나중에"를 누른 버전은 다시 묻지 않는다 (더 새 버전이 나오면 다시 알림)
   $('#update-title').textContent = `새 버전 ${updateCheck.latest} 출시 (지금 ${manifest.version})`;
-  $('#update-notes').replaceChildren(...(updateCheck.notes || []).map(n => el('li', { textContent: n })));
+  $('#update-notes').replaceChildren(...(updateCheck.notes || []).map(n => el('li', { textContent: n })),
+    el('li', { className: 'how', textContent: '업데이트: 바탕화면의 "Tonicstream 업데이트" 또는 확장 폴더의 Tonicstream-update.cmd를 더블클릭 → 끝나면 이 창을 다시 열어 [지금 적용]' }));
+  $('#update-get').textContent = '업데이트 방법';
   $('#update-get').onclick = () => { chrome.tabs.create({ url: UPDATE_PAGE }); window.close(); };
   $('#update-later').onclick = async () => {
     await chrome.storage.local.set({ updateCheck: { ...updateCheck, dismissed: updateCheck.latest } });
