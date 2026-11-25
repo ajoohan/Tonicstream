@@ -31,6 +31,23 @@ jobs:
           cd extension && zip -qr ../docs/tonicstream-extension.zip . -x '.*'
           cd .. && unzip -l docs/tonicstream-extension.zip
 
+      # Edge 스토어 제출용 ZIP: 자체 업데이트 주소(update_url)와 Windows 업데이트 도우미를 뺀 것.
+      # 스토어 설치본은 Edge가 업데이트하므로 둘 다 필요 없고, 스토어는 update_url이 있으면 받지 않는다.
+      - name: Build store ZIP
+        run: |
+          rm -rf /tmp/store && cp -r extension /tmp/store
+          rm -f /tmp/store/Tonicstream-update.cmd /tmp/store/tonicstream-update.ps1
+          python3 - <<'PY'
+          import json
+          p = '/tmp/store/manifest.json'
+          m = json.load(open(p, encoding='utf-8'))
+          m.pop('update_url', None)
+          json.dump(m, open(p, 'w', encoding='utf-8'), ensure_ascii=False, indent=2)
+          PY
+          rm -f docs/tonicstream-store.zip
+          (cd /tmp/store && zip -qr "$GITHUB_WORKSPACE/docs/tonicstream-store.zip" . -x '.*')
+          unzip -l docs/tonicstream-store.zip | tail -1
+
       # 회사 PC 자동 업데이트용: 서명한 CRX와 updates.xml을 만든다. 서명 열쇠(저장소 비밀값 CRX_PRIVATE_KEY)가 있을 때만.
       - name: Build signed CRX for auto-update
         env:
