@@ -54,3 +54,4 @@ details.others summary small { font-size: 12px; margin-left: 2px; }
 details.direct { margin-top: 8px; }
 details.direct summary { cursor: pointer; font-size: 13px; color: var(--muted); }
 details.direct .row input { flex: 1; min-width: 0; }
+#update li.how { list-style: none; margin: 6px 0 0 -18px; font-weight: 600; color: var(--fg); }
