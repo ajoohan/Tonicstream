@@ -526,9 +526,20 @@ if (!(() => { try { return typeof window.__tonicstream === 'function' && window.
       v.pause();
       for (let i = 0; i < n; i++) {
         const t = dur * (i + 0.5) / n;
-        v.currentTime = t;
-        await once(v, 'seeked', 8000);
-        if (v.readyState < 2) await once(v, 'canplay', 4000);
+        // 옮겨 가는 데 오래 걸리면 한 번 더 기다리고, 그래도 다른 곳이면 그 칸은 비워 둔다 (다른 장면에 엉뚱한 시각이 적히지 않게)
+        let reached = false;
+        for (let tries = 0; tries < 2 && !reached; tries++) {
+          v.currentTime = t;
+          await once(v, 'seeked', 8000);
+          if (v.readyState < 2) await once(v, 'canplay', 4000);
+          reached = Math.abs(v.currentTime - t) < 1.5 && v.readyState >= 2;
+        }
+        if (!reached) {
+          const x0 = pad + (i % cols) * (cw + gap), y0 = head + pad + Math.floor(i / cols) * (ch + label + gap);
+          ctx.fillStyle = '#e4e4ea'; ctx.fillRect(x0, y0, cw, ch);
+          ctx.fillStyle = '#5f5f6b'; ctx.font = `600 13px ${font}`; ctx.fillText(`${i + 1}  ·  ${fmt(t)}  (불러오지 못함)`, x0 + 2, y0 + ch + 16);
+          continue;
+        }
         const x = pad + (i % cols) * (cw + gap), y = head + pad + Math.floor(i / cols) * (ch + label + gap);
         let drawn = false;
         if (!screen) {
@@ -569,6 +580,7 @@ if (!(() => { try { return typeof window.__tonicstream === 'function' && window.
       if (!was.paused) v.play().catch(() => {});
       if (bar) bar.style.display = '';
       sheeting = false;
+      tell({ type: 'capture-end' }); // 화면 찍기 허락을 거둔다 (팝업이 먼저 닫혀도)
     }
     const blob = await new Promise((res, rej) => canvas.toBlob(b => (b ? res(b) : rej(new Error('그림을 만들지 못했습니다.'))), 'image/png'));
     const url = URL.createObjectURL(blob);
@@ -587,8 +599,16 @@ if (!(() => { try { return typeof window.__tonicstream === 'function' && window.
     const m = { author: '', published: '', caption: '', hashtags: [], views: 0, likes: 0 };
     const meta = sel => document.querySelector(sel)?.content || '';
     const num = x => { const n = Number(String(x ?? '').replace(/[^\d]/g, '')); return Number.isFinite(n) ? n : 0; };
+    // 피드형 사이트(틱톡·릴스·쇼츠)는 페이지를 새로 불러오지 않고 영상만 바꾼다. 그때 페이지에 들어 있는 정보는
+    // 처음 연 영상의 것이므로, 지금 주소와 같은 영상의 정보일 때만 쓴다. (다른 영상의 계정·해시태그가 기록되지 않게)
+    const norm = u => { if (!u) return ''; try { return new URL(u, location.href).pathname.replace(/\/+$/, '') || '/'; } catch { return ''; } };
+    const here = norm(location.href);
+    const loaded = norm(performance.getEntriesByType('navigation')[0]?.name || location.href);
+    const fresh = loaded === here
+      || norm(document.querySelector('link[rel="canonical"]')?.href || '') === here
+      || norm(meta('meta[property="og:url"]')) === here;
     // 1) 검색엔진용 정보(JSON-LD)
-    for (const s of [...document.querySelectorAll('script[type="application/ld+json"]')].slice(0, 10)) {
+    for (const s of fresh ? [...document.querySelectorAll('script[type="application/ld+json"]')].slice(0, 10) : []) {
       if (s.textContent.length > 300_000) continue;
       try {
         const walk = o => {
@@ -617,7 +637,7 @@ if (!(() => { try { return typeof window.__tonicstream === 'function' && window.
       if (/(^|\.)tiktok\.com$/.test(host)) {
         const raw = document.getElementById('__UNIVERSAL_DATA_FOR_REHYDRATION__')?.textContent;
         const item = raw && JSON.parse(raw)?.__DEFAULT_SCOPE__?.['webapp.video-detail']?.itemInfo?.itemStruct;
-        if (item) {
+        if (item && String(item.id || '') && location.pathname.includes(String(item.id))) { // 지금 보는 영상의 정보일 때만
           m.author ||= item.author?.uniqueId ? `@${item.author.uniqueId}` : '';
           m.caption ||= item.desc || '';
           m.published ||= item.createTime ? new Date(item.createTime * 1000).toISOString() : '';
@@ -625,21 +645,28 @@ if (!(() => { try { return typeof window.__tonicstream === 'function' && window.
         }
       }
       if (/(^|\.)youtube\.com$/.test(host)) {
+        // 채널 이름은 화면에 그려진 것이라 영상이 바뀌면 함께 바뀐다. 게시일·조회수는 같은 영상의 정보일 때만.
         m.author ||= document.querySelector('#owner #channel-name a, ytd-channel-name a')?.textContent?.trim() || '';
-        m.published ||= document.querySelector('meta[itemprop="datePublished"], meta[itemprop="uploadDate"]')?.content || '';
-        m.views ||= num(document.querySelector('meta[itemprop="interactionCount"]')?.content);
+        const vid = new URLSearchParams(location.search).get('v') || location.pathname.split('/shorts/')[1]?.split('/')[0] || '';
+        const metaVid = document.querySelector('meta[itemprop="identifier"], meta[itemprop="videoId"]')?.content || '';
+        if (vid && vid === metaVid) {
+          m.published ||= document.querySelector('meta[itemprop="datePublished"], meta[itemprop="uploadDate"]')?.content || '';
+          m.views ||= num(document.querySelector('meta[itemprop="interactionCount"]')?.content);
+        }
       }
-      if (/(^|\.)instagram\.com$/.test(host)) {
+      if (/(^|\.)instagram\.com$/.test(host) && fresh) {
         // og:description 예: "1,234 likes, 56 comments - 계정 on 2026년 11월 1일: \"캡션\""
         const og = meta('meta[property="og:description"]');
         const mm = /^([\d,.]+[KkMm만천]?)\s+likes?.*?-\s*([^\s]+)\s+on\s+([^:]+):\s*"?([\s\S]*?)"?\.?$/.exec(og);
         if (mm) { m.likes ||= num(mm[1]); m.author ||= `@${mm[2]}`; m.published ||= mm[3].trim(); m.caption ||= mm[4]; }
       }
     } catch {}
-    // 3) 공유용 정보
-    m.caption ||= meta('meta[property="og:description"]') || meta('meta[name="description"]');
-    m.author ||= meta('meta[name="author"]') || meta('meta[property="og:site_name"]');
-    m.published ||= meta('meta[property="article:published_time"]') || meta('meta[property="og:video:release_date"]');
+    // 3) 공유용 정보 (같은 영상의 것일 때만)
+    if (fresh) {
+      m.caption ||= meta('meta[property="og:description"]') || meta('meta[name="description"]');
+      m.author ||= meta('meta[name="author"]') || meta('meta[property="og:site_name"]');
+      m.published ||= meta('meta[property="article:published_time"]') || meta('meta[property="og:video:release_date"]');
+    }
     m.caption = String(m.caption).replace(/\s+/g, ' ').trim().slice(0, 600);
     m.author = String(m.author).trim().slice(0, 80);
     m.published = String(m.published).trim().slice(0, 40);

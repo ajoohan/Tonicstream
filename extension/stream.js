@@ -63,7 +63,24 @@ async function fetchOnce(url, { range, signal, fresh }) {
   }
 }
 
+// 받으려는 서버(호스트)를 배경에 알려, 그 서버로 가는 요청에만 원래 페이지의 Referer·Origin이 붙게 한다.
+// 출처(origin)는 작업마다 정해져 있으며, 요청 취소 신호(signal)에 붙여 함께 넘긴다 (signal.tsOrigin).
+const allowed = new Map(); // "출처|호스트" → 등록 작업
+function allowHost(url, signal) {
+  const origin = signal?.tsOrigin;
+  let host = '';
+  try { host = new URL(url).hostname; } catch {}
+  if (!origin || !host) return null;
+  const key = `${origin}|${host}`;
+  if (!allowed.has(key)) {
+    allowed.set(key, chrome.runtime.sendMessage({ type: 'hls-host', origin, host }).catch(() => {}));
+    setTimeout(() => allowed.delete(key), 10 * 60_000); // 배경이 규칙을 거둘 수 있으므로 가끔 다시 알린다
+  }
+  return allowed.get(key);
+}
+
 async function fetchRetry(url, { range = null, signal, text = false, fresh = false, meta = false } = {}) {
+  await allowHost(url, signal);
   let last;
   for (let i = 0; i < 5; i++) {
     if (i) await wait([0, 800, 2500, 6000, 12000][i], signal);
@@ -495,7 +512,8 @@ let current = null; // { ctl, stop, wake }
 
 async function runJob(msg, report) {
   const ctl = new AbortController();
-  const job = { ctl, stopped: false, wake: null, netError: null };
+  ctl.signal.tsOrigin = msg.origin || '';
+  const job = { id: msg.job, ctl, stopped: false, wake: null, netError: null };
   current = job;
   try { return await runJobInner(msg, report, job); } finally { if (current === job) current = null; }
 }
@@ -529,6 +547,7 @@ async function runJobInner(msg, report, job) {
     // 멈추거나 끝날 때는 미리 받기 시작한 요청도 함께 그만둔다.
     const process = async items => {
       const batch = new AbortController();
+      batch.signal.tsOrigin = signal.tsOrigin;
       const stopBatch = () => batch.abort();
       signal.addEventListener('abort', stopBatch, { once: true });
       const fetchOne = it => fetchRetry(it.url, { range: it.range, signal: batch.signal }).then(b => (it.key && !it.init ? decrypt(b, it, keys, batch.signal) : b));
@@ -636,6 +655,7 @@ const fmtBytes = b => (b >= 1024 ** 3 ? `${(b / 1024 ** 3).toFixed(1)}GB` : `${M
 // 받기 전에 고를 수 있는 화질·소리와 길이를 알려 준다
 async function probe(msg) {
   const ctl = new AbortController();
+  ctl.signal.tsOrigin = msg.origin || '';
   const timer = setTimeout(() => ctl.abort(), 20_000);
   try {
     const entries = (msg.urls || []).map(u => (typeof u === 'string' ? { url: u, kind: /\.mpd(\?|$)/i.test(u) ? 'dash' : 'hls' } : u));
@@ -667,8 +687,10 @@ async function hlsRun(msg) {
 let queue = Promise.resolve();
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (sender.tab) return; // 배경이 보낸 것만
-  if (msg.type === 'offscreen-hls-cancel') { current?.ctl.abort(); sendResponse({ active: !!current }); return; }
-  if (msg.type === 'offscreen-hls-stop') { if (current) { current.stopped = true; current.wake?.(); } sendResponse({ active: !!current }); return; }
+  // 취소·정지는 그 작업에만 (다른 작업 번호면 아무것도 하지 않는다)
+  const mine = current && (!msg.job || current.id === msg.job);
+  if (msg.type === 'offscreen-hls-cancel') { if (mine) current.ctl.abort(); sendResponse({ active: !!mine }); return; }
+  if (msg.type === 'offscreen-hls-stop') { if (mine) { current.stopped = true; current.wake?.(); } sendResponse({ active: !!mine }); return; }
   if (msg.type === 'offscreen-hls-probe') { probe(msg).then(sendResponse); return true; }
   if (msg.type === 'offscreen-revoke' && diskFiles.has(msg.url)) {
     // 지운 뒤에 답한다. 배경은 이 답을 기다렸다가 숨겨진 페이지를 닫는다 (임시 파일이 남지 않게).
@@ -678,7 +700,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
   if (msg.type !== 'offscreen-hls') return;
-  // 한 번에 하나만: 앞선 작업이 남아 있으면 그만두게 하고, 정리가 끝난 뒤에 시작한다
+  // 한 번에 하나만. 배경은 앞 작업이 끝난 뒤에 다음 것을 보낸다. 그런데도 앞 작업이 남아 있으면(배경이 멈춘 것으로 보고 넘어간 경우) 그만두게 한다.
   current?.ctl.abort();
   queue = queue.then(() => hlsRun(msg)).catch(() => {});
 });
