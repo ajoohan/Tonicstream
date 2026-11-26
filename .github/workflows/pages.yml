@@ -26,6 +26,8 @@ jobs:
       - name: Build extension ZIP
         run: |
           rm -f docs/tonicstream-extension.zip
+          # 업데이트 도우미가 지울 수 있는 파일은 이 목록에 있는 것뿐이다 (폴더의 다른 파일은 건드리지 않게)
+          (cd extension && find . -type f ! -name '.*' ! -name files.txt | sed 's|^\./||' | sort > files.txt && echo files.txt >> files.txt)
           cd extension && zip -qr ../docs/tonicstream-extension.zip . -x '.*'
           cd .. && unzip -l docs/tonicstream-extension.zip
 
@@ -34,7 +36,7 @@ jobs:
       - name: Build store ZIP
         run: |
           rm -rf /tmp/store && cp -r extension /tmp/store
-          rm -f /tmp/store/Tonicstream-update.cmd /tmp/store/tonicstream-update.ps1
+          rm -f /tmp/store/Tonicstream-update.cmd /tmp/store/tonicstream-update.ps1 /tmp/store/files.txt
           python3 - <<'PY'
           import json
           p = '/tmp/store/manifest.json'

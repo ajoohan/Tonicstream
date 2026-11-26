@@ -178,70 +178,96 @@ async function probeStream(stream) {
   probing = true;
   const res = await chrome.runtime.sendMessage({ type: 'hls-probe', tabId: tab.id, pageUrl: tab.url, hint: mainDuration }).catch(() => null);
   probing = false;
-  // 다른 영상을 받는 중이면 화질을 알아볼 수 없다. 그 작업이 끝난 뒤 다시 그릴 때 다시 알아본다.
-  probed = res?.busy ? { key, ok: false, busy: true, error: '다른 영상을 받는 중이라 화질을 확인하지 못했습니다.' }
-    : { key, ...(res || { ok: false, error: '목록을 읽지 못했습니다.' }) };
+  probed = { key, ...(res || { ok: false, error: '목록을 읽지 못했습니다.' }) };
   if (probed.ok) pick = { variant: probed.variant, audio: probed.audio };
   if (!pressing) renderFiles();
 }
 const speedOf = job => { const sec = (Date.now() - job.startedAt) / 1000; return sec > 2 ? job.bytes / sec : 0; };
 const fmtLeft = s => (s >= 3600 ? `${Math.floor(s / 3600)}시간 ${Math.round(s % 3600 / 60)}분` : s >= 60 ? `${Math.round(s / 60)}분` : `${Math.max(1, Math.round(s))}초`);
+const isActive = j => j.state === 'queued' || j.state === 'running';
 
-function streamCard(stream) {
-  // 받는 중인 작업은 이 탭 것이면 보여 주고, 끝난 결과(저장함·실패)는 같은 페이지일 때만 보여 준다
-  const any = stream.job?.state === 'running';
-  const mine = stream.job && stream.job.tabId === tab.id && (any || stream.job.pageUrl === tab.url);
-  const job = mine ? stream.job : null;
+// 이 페이지의 스트리밍 영상 카드: 화질·소리를 고르고 다운로드 목록에 더한다.
+// 다른 영상을 받는 중이어도 목록에 더해 두면 차례로 받는다.
+function streamCard(stream, jobs) {
   const row = el('div', { className: 'row' });
   const parts = [];
   let head = '스트리밍 영상', info = '';
-  if (job?.state === 'running') {
-    const pct = job.total ? Math.round(job.done / job.total * 100) : 0;
-    const sp = speedOf(job);
-    if (job.live) {
-      head = '생방송 받는 중';
-      info = `${fmtTime(job.seconds)} · ${fmtSize(job.bytes)} · "정지 후 저장"을 누르면 그때까지 저장합니다`;
-    } else if (job.total) {
-      const left = job.done ? (Date.now() - job.startedAt) / 1000 * (job.total - job.done) / job.done : 0;
-      info = `받는 중 ${pct}% · ${fmtSize(job.bytes)}${sp ? ` · ${fmtSize(sp)}/s` : ''}${left ? ` · 약 ${fmtLeft(left)} 남음` : ''}`;
-    } else info = '준비 중…';
-    if (job.quality) head += ` · ${job.quality}`;
-    row.append(el('span', { className: 'rec', textContent: job.live ? '● REC' : `⬇ ${pct}%` }),
-      el('button', { className: 'primary', textContent: '정지 후 저장', title: '지금까지 받은 부분만 저장합니다', onclick: async e => {
-        e.target.disabled = true; await chrome.runtime.sendMessage({ type: 'hls-stop' }); say('지금까지 받은 부분을 저장하는 중입니다…'); setTimeout(renderFiles, 800); } }),
-      el('button', { textContent: '취소', onclick: async () => { await chrome.runtime.sendMessage({ type: 'hls-cancel' }); setTimeout(renderFiles, 600); } }));
-  } else if (any && !mine) {
-    info = '다른 탭의 스트리밍 영상을 받는 중입니다. 끝난 뒤에 받을 수 있습니다.';
-  } else {
-    if (job?.state === 'done') info = `저장했습니다${job.partial ? '(일부)' : ''} · ${fmtSize(job.size)}${job.quality ? ' · ' + job.quality : ''} · ${fmtTime(job.seconds)}${job.note ? ` · ${job.note}` : ''}`;
-    if (job?.state === 'error') info = `받지 못했습니다: ${job.error}`;
-    if (probed?.busy && !any) probed = null; // 막고 있던 작업이 끝났으니 다시 알아본다
-    probeStream(stream);
-    const p = probed?.key?.startsWith(`${tab.url}|`) ? probed : null;
-    if (p?.ok) {
-      head += ` · ${p.kind}${p.live ? ' · 생방송' : p.duration ? ` · ${fmtTime(p.duration)}` : ''}`;
-      if (!info) info = p.live ? '지금부터 방송을 받아 두었다가 "정지 후 저장"을 누르면 저장합니다.' : p.est ? `예상 크기 약 ${fmtSize(p.est)}` : '';
-      const sel = (list, key, label) => {
-        const s = el('select', { title: label, onchange: () => { pick[key] = s.value; } },
-          ...list.map(o => el('option', { value: o.id, textContent: o.label, selected: o.id === pick[key] })));
-        return s;
-      };
-      if (p.variants.length > 1) parts.push(sel(p.variants, 'variant', '화질'));
-      if (p.audios.length > 1) parts.push(sel(p.audios, 'audio', '소리'));
-    } else if (p && !p.ok) {
-      info ||= p.error;
-    } else info ||= '화질을 확인하는 중…';
-    if (!stream.lists?.length) return el('div', { className: 'card stream' }, el('div', { className: 'meta', textContent: `${head} · ${info}` })); // 주소로 직접 받은 것
-    row.append(el('button', { className: 'primary', textContent: p?.live ? '생방송 받기 시작' : job?.state === 'done' ? '다시 받기' : '스트리밍 영상 받기', onclick: async e => {
-      e.target.disabled = true; // 연달아 눌러도 한 번만
-      // 한 탭에서 영상을 여러 개 봤으면 조각 목록도 여러 개다. 지금 보는 영상의 길이를 알려 주어 맞는 것을 고르게 한다.
-      const res = await chrome.runtime.sendMessage({ type: 'hls-start', tabId: tab.id, title: tab.title, pageUrl: tab.url, hint: mainDuration, variant: pick.variant, audio: pick.audio });
-      if (!res?.ok) say(res?.error || '시작하지 못했습니다.');
-      renderFiles();
-    } }));
-  }
+  probeStream(stream);
+  const p = probed?.key?.startsWith(`${tab.url}|`) ? probed : null;
+  if (p?.ok) {
+    head += ` · ${p.kind}${p.live ? ' · 생방송' : p.duration ? ` · ${fmtTime(p.duration)}` : ''}`;
+    info = p.live ? '지금부터 방송을 받아 두었다가 목록의 "정지 후 저장"을 누르면 저장합니다.' : p.est ? `예상 크기 약 ${fmtSize(p.est)}` : '';
+    const sel = (list, key, label) => {
+      const s = el('select', { title: label, onchange: () => { pick[key] = s.value; } },
+        ...list.map(o => el('option', { value: o.id, textContent: o.label, selected: o.id === pick[key] })));
+      return s;
+    };
+    if (p.variants.length > 1) parts.push(sel(p.variants, 'variant', '화질'));
+    if (p.audios.length > 1) parts.push(sel(p.audios, 'audio', '소리'));
+  } else info = p ? p.error : '화질을 확인하는 중…';
+  const busy = jobs.some(isActive);
+  row.append(el('button', { className: 'primary', textContent: busy ? '다운로드 목록에 추가' : p?.live ? '생방송 받기 시작' : '스트리밍 영상 받기', onclick: async e => {
+    e.target.disabled = true; // 연달아 눌러도 한 번만
+    // 한 탭에서 영상을 여러 개 봤으면 조각 목록도 여러 개다. 지금 보는 영상의 길이를 알려 주어 맞는 것을 고르게 한다.
+    const label = p?.variants?.find(v => v.id === pick.variant)?.label || '';
+    const res = await chrome.runtime.sendMessage({ type: 'hls-start', tabId: tab.id, title: tab.title, pageUrl: tab.url, hint: mainDuration,
+      variant: pick.variant, audio: pick.audio, variantLabel: label });
+    say(!res?.ok ? res?.error || '시작하지 못했습니다.' : res.position > 1 ? `다운로드 목록에 추가했습니다. (${res.position}번째) 다른 페이지로 옮겨도 계속 받습니다.`
+      : '받기 시작했습니다. 다른 페이지로 옮기거나 이 창을 닫아도 계속 받습니다.');
+    setTimeout(() => { e.target.disabled = false; }, 1500);
+    renderJobs();
+  } }));
   return el('div', { className: 'card stream' }, el('div', { className: 'meta', textContent: head + (info ? ` · ${info}` : '') }),
     ...(parts.length ? [el('div', { className: 'row pick' }, ...parts)] : []), row);
+}
+
+// ── 스트리밍 다운로드 목록 ──
+// 모든 탭에서 더한 다운로드가 한곳에 모인다. 한 번에 하나씩 받고, 끝나면 다음 것을 자동으로 받는다.
+let jobsTimer = null;
+function jobRow(j, order) {
+  const pct = j.total ? Math.round(j.done / j.total * 100) : 0;
+  let line = '', barPct = 0;
+  if (j.state === 'queued') line = `대기 중 · ${order}번째${j.variantLabel ? ` · ${j.variantLabel}` : ''}`;
+  else if (j.state === 'running') {
+    if (j.live) line = `생방송 받는 중 · ${fmtTime(j.seconds)}${j.bytes ? ` · ${fmtSize(j.bytes)}` : ''}`;
+    else if (j.total) {
+      const sp = speedOf(j);
+      const left = j.done ? (Date.now() - j.startedAt) / 1000 * (j.total - j.done) / j.done : 0;
+      line = `받는 중 ${pct}%${j.bytes ? ` · ${fmtSize(j.bytes)}` : ''}${sp ? ` · ${fmtSize(sp)}/s` : ''}${left ? ` · 약 ${fmtLeft(left)} 남음` : ''}`;
+      barPct = pct;
+    } else line = '준비 중…';
+    if (j.quality) line += ` · ${j.quality}`;
+  } else if (j.state === 'done') { line = `저장했습니다${j.partial ? '(일부)' : ''} · ${fmtSize(j.size)}${j.quality ? ' · ' + j.quality : ''} · ${fmtTime(j.seconds)}${j.note ? ` · ${j.note}` : ''}`; barPct = 100; }
+  else if (j.state === 'error') line = `받지 못했습니다: ${j.error}`;
+  else line = '취소했습니다';
+  const acts = el('div', { className: 'row' });
+  if (j.state === 'running') {
+    acts.append(el('button', { textContent: '정지 후 저장', title: '지금까지 받은 부분만 저장합니다', onclick: async e => {
+      e.target.disabled = true; await chrome.runtime.sendMessage({ type: 'hls-stop', id: j.id }); say('지금까지 받은 부분을 저장하는 중입니다…'); renderJobs(); } }));
+  }
+  if (isActive(j)) acts.append(el('button', { textContent: j.state === 'queued' ? '빼기' : '취소', onclick: async e => {
+    e.target.disabled = true; await chrome.runtime.sendMessage({ type: 'hls-cancel', id: j.id }); renderJobs(); } }));
+  if (j.state === 'done' && j.downloadId != null) acts.append(el('button', { textContent: '파일 위치 열기', onclick: () => chrome.downloads.show(j.downloadId) }));
+  const bar = el('div', { className: 'bar' }, el('i', { style: `width:${barPct}%` }));
+  if (j.state === 'running' && !j.total) bar.classList.add('busy');
+  return el('div', { className: `card job ${j.state}` },
+    el('div', { className: 'jt', textContent: j.title || '스트리밍 영상', title: j.pageUrl || '' }),
+    ...(isActive(j) || j.state === 'done' ? [bar] : []),
+    el('div', { className: 'meta', textContent: line }), ...(acts.childElementCount ? [acts] : []));
+}
+async function renderJobs(jobs) {
+  if (!jobs) jobs = (await chrome.runtime.sendMessage({ type: 'get-stream', tabId: tab?.id ?? -1 }).catch(() => null))?.jobs || [];
+  const box = $('#jobs');
+  $('#dlsec').hidden = !jobs.length;
+  let order = 0;
+  // 받는 중·대기 중인 것을 받는 순서대로 위에, 끝난 것은 최근 것부터 아래에
+  const active = jobs.filter(isActive);
+  const ordered = [...active, ...jobs.filter(j => !isActive(j)).reverse()];
+  box.replaceChildren(...ordered.map(j => jobRow(j, isActive(j) ? ++order : 0)));
+  $('#jobs-clear').hidden = !jobs.some(j => !isActive(j));
+  clearTimeout(jobsTimer);
+  if (active.length) jobsTimer = setTimeout(() => (pressing ? null : renderJobs()), 800);
+  return jobs;
 }
 
 // 주소로 직접 받기: 개발자 도구 등에서 찾은 영상 주소(mp4·m3u8·mpd)를 넣어 받는다
@@ -252,11 +278,10 @@ async function directDownload() {
   if (!/^https?:$/.test(u.protocol)) return say('http:// 또는 https://로 시작하는 주소만 받을 수 있습니다.');
   if (/\.(mp4|m4v|webm|mov|ogv|mkv)$/i.test(u.pathname)) return download(url);
   const res = await chrome.runtime.sendMessage({ type: 'hls-start', tabId: tab.id, title: tab.title, pageUrl: tab.url, urls: [url] });
-  say(res?.ok ? '스트리밍 영상을 받기 시작했습니다. 아래에서 진행 상황을 볼 수 있습니다.' : res?.error || '시작하지 못했습니다.');
-  renderFiles();
+  say(res?.ok ? '다운로드 목록에 추가했습니다. 위의 목록에서 진행 상황을 볼 수 있습니다.' : res?.error || '시작하지 못했습니다.');
+  renderJobs();
 }
 
-let filesTimer = null;
 let mainDuration = 0; // 지금 보는 영상의 길이(초). 모르면 0
 // "바로 다운로드" 목록 그리기
 async function renderFiles(files, stream) {
@@ -284,14 +309,9 @@ async function renderFiles(files, stream) {
       e.target.disabled = false;
     } })));
   }
-  // 주소로 직접 받은 작업도 이 탭에서 진행 상황이 보이게 한다
-  const directJob = stream?.job?.direct && stream.job.tabId === tab.id && (stream.job.state === 'running' || stream.job.pageUrl === tab.url);
-  if (stream?.lists?.length || directJob) cards.unshift(streamCard(stream));
+  if (stream?.lists?.length) cards.unshift(streamCard(stream, stream.jobs || []));
   $('#files').replaceChildren(...(cards.length ? cards : [el('p', { className: 'empty', textContent: none })]));
-  // 스트리밍을 받는 동안에는 진행률이 보이도록 이 목록만 주기적으로 다시 그린다
-  clearTimeout(filesTimer);
-  // 다른 탭의 작업이 끝나기를 기다리는 중이면 가끔 다시 그려, 끝나는 대로 이 탭에서도 받을 수 있게 한다
-  if (stream?.job?.state === 'running') filesTimer = setTimeout(() => (pressing ? null : renderFiles()), stream.job.tabId === tab.id ? 700 : 2000);
+  renderJobs(stream?.jobs || []);
 }
 
 async function download(url, type = '', v = null, suffix = '') {
@@ -463,9 +483,11 @@ async function checkUpdate() {
       el('li', { textContent: '적용되지 않으면 Edge를 모두 닫았다가 다시 여세요.' }));
     $('#update-get').textContent = '지금 적용';
     $('#update-get').onclick = async () => {
-      const s = await chrome.storage.session.get(['tabRec', 'screenRec', 'videoRecs', 'hlsJob']);
-      const busy = s.tabRec || s.screenRec || Object.values(s.videoRecs || {}).some(f => f?.length) || s.hlsJob?.state === 'running';
-      if (busy) return say('녹화나 스트리밍 받기가 끝난 뒤에 적용해 주세요.');
+      const s = await chrome.storage.session.get(['tabRec', 'screenRec', 'videoRecs', 'hlsJobs']);
+      // 저장 중인 파일도 확장을 다시 켜면 끊기므로 함께 확인한다
+      const saving = (await chrome.downloads.search({ state: 'in_progress' })).some(d => d.byExtensionId === chrome.runtime.id);
+      const busy = s.tabRec || s.screenRec || Object.values(s.videoRecs || {}).some(f => f?.length) || (s.hlsJobs || []).some(isActive) || saving;
+      if (busy) return say('녹화·스트리밍 받기·파일 저장이 끝난 뒤에 적용해 주세요.');
       chrome.runtime.reload();
     };
     $('#update-later').onclick = () => { $('#update').hidden = true; };
@@ -515,11 +537,13 @@ async function checkUpdate() {
     $('#pagecap').disabled = false;
   };
   $('#direct-go').onclick = directDownload;
+  $('#jobs-clear').onclick = async () => { await chrome.runtime.sendMessage({ type: 'hls-clear' }); renderJobs(); };
   $('#direct-url').onkeydown = e => { if (e.key === 'Enter') directDownload(); };
   $('#library').onclick = () => { chrome.tabs.create({ url: 'library.html' }); window.close(); };
   if (!tab?.id || !/^https?:|^file:/.test(tab.url || '')) {
     // 새 탭·설정 화면 등에서는 화면 녹화만 쓸 수 있다
     await renderScreenRec();
+    renderJobs(); // 다른 탭에서 더한 스트리밍 다운로드는 여기서도 보인다
     const note = '이 페이지에는 저장할 영상이 없습니다. 화면 녹화는 사용할 수 있습니다.';
     $('#videos').replaceChildren(el('p', { className: 'empty', textContent: note }));
     $('#files').replaceChildren(el('p', { className: 'empty', textContent: '감지된 원본 파일이 없습니다.' }));

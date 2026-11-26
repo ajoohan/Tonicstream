@@ -36,6 +36,11 @@ try {
   if (-not (Test-Path (Join-Path $new 'manifest.json'))) { throw '내려받은 파일이 올바르지 않습니다.' }
 
   Write-Host '파일을 바꾸는 중…'
+  # 지난번에 이 도우미가 깐 파일 목록 (files.txt). 지울 때는 이 목록에 있던 것만 지운다.
+  # 같은 폴더에 있는 다른 파일(사용자가 둔 문서 등)은 절대 건드리지 않는다.
+  $oldList = Join-Path $Ext 'files.txt'
+  $old = @()
+  if (Test-Path -LiteralPath $oldList) { $old = Get-Content -LiteralPath $oldList -Encoding UTF8 | Where-Object { $_ -and $_ -notmatch '\.\.' } }
   $keep = @{}
   # manifest.json(버전 정보)은 맨 마지막에 바꾼다. 확장이 새 버전을 알아챌 때 다른 파일은 이미 모두 바뀌어 있도록.
   foreach ($f in (Get-ChildItem -LiteralPath $new -Recurse -File -Force)) {
@@ -46,10 +51,12 @@ try {
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dest) | Out-Null
     Copy-Item -LiteralPath $f.FullName -Destination $dest -Force
   }
-  # 새 버전에 없는 옛 파일은 지운다
-  foreach ($f in (Get-ChildItem -LiteralPath $Ext -Recurse -File -Force)) {
-    $rel = $f.FullName.Substring($Ext.TrimEnd('\', '/').Length).TrimStart('\', '/').ToLower().Replace('\', '/')
-    if (-not $keep.ContainsKey($rel)) { Remove-Item -LiteralPath $f.FullName -Force }
+  # 지난 버전에는 있었는데 새 버전에는 없는 파일만 지운다 (지난 목록이 없으면 지우지 않는다)
+  foreach ($rel in $old) {
+    $r = $rel.Trim().Replace('\', '/')
+    if (-not $r -or $r.StartsWith('/') -or $r -match ':' -or $keep.ContainsKey($r.ToLower())) { continue }
+    $target = Join-Path $Ext $r
+    if (Test-Path -LiteralPath $target -PathType Leaf) { Remove-Item -LiteralPath $target -Force }
   }
   Copy-Item -LiteralPath (Join-Path $new 'manifest.json') -Destination $manifest -Force
 

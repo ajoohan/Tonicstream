@@ -55,3 +55,13 @@ details.direct { margin-top: 8px; }
 details.direct summary { cursor: pointer; font-size: 13px; color: var(--muted); }
 details.direct .row input { flex: 1; min-width: 0; }
 #update li.how { list-style: none; margin: 6px 0 0 -18px; font-weight: 600; color: var(--fg); }
+.job .jt { font-weight: 700; font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.job .bar { height: 6px; border-radius: 99px; background: var(--line); overflow: hidden; margin: 7px 0 5px; }
+.job .bar i { display: block; height: 100%; background: var(--accent); border-radius: 99px; transition: width .4s; }
+.job .bar.busy i { width: 30% !important; animation: jobbusy 1.2s ease-in-out infinite; }
+@keyframes jobbusy { 0% { margin-left: -30%; } 100% { margin-left: 100%; } }
+.job.done .bar i { background: #2f9e64; }
+.job.error .meta { color: var(--accent); }
+.job.canceled, .job.error { opacity: .8; }
+#jobs .card + .card { margin-top: 8px; }
+@media (prefers-reduced-motion: reduce) { .job .bar.busy i { animation: none; margin-left: 0; } }
