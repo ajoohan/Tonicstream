@@ -9,7 +9,7 @@
 - 업로드 파일: https://stream.plustonic.com/tonicstream-store.zip
   - 스토어 제출 전용입니다. 자체 업데이트 주소(`update_url`)와 Windows 업데이트 도우미를 뺐습니다. (ZIP 직접 설치용 `tonicstream-extension.zip`을 올리면 거절됩니다.)
   - 배포할 때마다 자동으로 새로 만들어집니다. `manifest.json`이 압축 파일 맨 위에 있어 그대로 올리면 됩니다.
-- 버전: 0.14.0
+- 버전: 0.14.1
 
 ## 2. 제출 순서
 
