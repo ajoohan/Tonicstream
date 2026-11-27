@@ -211,7 +211,7 @@ function streamCard(stream, jobs) {
     // 한 탭에서 영상을 여러 개 봤으면 조각 목록도 여러 개다. 지금 보는 영상의 길이를 알려 주어 맞는 것을 고르게 한다.
     const label = p?.variants?.find(v => v.id === pick.variant)?.label || '';
     const res = await chrome.runtime.sendMessage({ type: 'hls-start', tabId: tab.id, title: tab.title, pageUrl: tab.url, hint: mainDuration,
-      variant: pick.variant, audio: pick.audio, variantLabel: label });
+      variant: pick.variant, audio: pick.audio, variantLabel: label, live: !!p?.live });
     say(!res?.ok ? res?.error || '시작하지 못했습니다.' : res.position > 1 ? `다운로드 목록에 추가했습니다. (${res.position}번째) 다른 페이지로 옮겨도 계속 받습니다.`
       : '받기 시작했습니다. 다른 페이지로 옮기거나 이 창을 닫아도 계속 받습니다.');
     setTimeout(() => { e.target.disabled = false; }, 1500);
@@ -256,7 +256,7 @@ function jobRow(j, order) {
     el('div', { className: 'meta', textContent: line }), ...(acts.childElementCount ? [acts] : []));
 }
 async function renderJobs(jobs) {
-  if (!jobs) jobs = (await chrome.runtime.sendMessage({ type: 'get-stream', tabId: tab?.id ?? -1 }).catch(() => null))?.jobs || [];
+  if (!jobs) jobs = (await chrome.runtime.sendMessage({ type: 'get-stream', tabId: tab?.id ?? -1, incognito: !!tab?.incognito }).catch(() => null))?.jobs || [];
   const box = $('#jobs');
   $('#dlsec').hidden = !jobs.length;
   let order = 0;
@@ -269,6 +269,13 @@ async function renderJobs(jobs) {
   if (active.length) jobsTimer = setTimeout(() => (pressing ? null : renderJobs()), 800);
   return jobs;
 }
+// 다른 창·탭에서 다운로드를 더하거나 끝나면 바로 다시 그린다 (진행률은 위의 타이머가 맡는다)
+let jobsSeen = '';
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'session' || !changes.hlsJobs) return;
+  const sig = (changes.hlsJobs.newValue || []).map(j => `${j.id}:${j.state}`).join(',');
+  if (sig !== jobsSeen) { jobsSeen = sig; if (!pressing) renderJobs(); }
+});
 
 // 주소로 직접 받기: 개발자 도구 등에서 찾은 영상 주소(mp4·m3u8·mpd)를 넣어 받는다
 async function directDownload() {
@@ -288,7 +295,7 @@ async function renderFiles(files, stream) {
   if (files === undefined) {
     [files, stream] = await Promise.all([
       chrome.runtime.sendMessage({ type: 'getMedia', tabId: tab.id }),
-      chrome.runtime.sendMessage({ type: 'get-stream', tabId: tab.id }).catch(() => null),
+      chrome.runtime.sendMessage({ type: 'get-stream', tabId: tab.id, incognito: !!tab.incognito }).catch(() => null),
     ]);
   }
   const hasStream = !!stream?.any;
@@ -411,7 +418,7 @@ async function render() {
     frameVideos(),
     chrome.runtime.sendMessage({ type: 'getMedia', tabId: tab.id }),
     chrome.runtime.sendMessage({ type: 'tabrec-status' }),
-    chrome.runtime.sendMessage({ type: 'get-stream', tabId: tab.id }).catch(() => null),
+    chrome.runtime.sendMessage({ type: 'get-stream', tabId: tab.id, incognito: !!tab.incognito }).catch(() => null),
   ]);
   renderTabRec(rec);
   // 목록의 맨 앞이 지금 보는 영상이다 (녹화 중 > 재생 중 > 큰 것 순)

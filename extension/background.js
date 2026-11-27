@@ -344,7 +344,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === 'has-stream') { streamTabsReady.then(() => sendResponse(streamTabs.has(msg.tabId))); return true; }
   if (msg.type === 'get-stream') {
     Promise.all([streamTabsReady, jobsNow()]).then(([, jobs]) =>
-      sendResponse({ any: streamTabs.has(msg.tabId), lists: streamTabs.get(msg.tabId)?.hls || [], jobs: jobs.map(({ urls, ...j }) => j) }));
+      // 시크릿 창에서 더한 다운로드는 시크릿 창의 팝업에서만 보인다
+      sendResponse({ any: streamTabs.has(msg.tabId), lists: streamTabs.get(msg.tabId)?.hls || [],
+        jobs: jobs.filter(j => !j.incognito || msg.incognito).map(({ urls, ...j }) => j) }));
     return true;
   }
   // 팝업이 페이지 안에서 찾아낸 조각 목록 주소 (확장이 켜지기 전에 불러온 것 등)
@@ -359,7 +361,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === 'hls-stop') { hlsStop(String(msg.id)).then(() => sendResponse({ ok: true })); return true; }
   if (msg.type === 'hls-cancel') { hlsCancel(String(msg.id)).then(() => sendResponse({ ok: true })); return true; }
   if (msg.type === 'hls-clear') { hlsClear().then(() => sendResponse({ ok: true })); return true; }
-  if (msg.type === 'hls-host') { allowHost(msg.origin, msg.host).then(() => sendResponse({ ok: true })); return true; }
+  if (msg.type === 'hls-host') { allowHost(msg.origin, msg.host, msg.job).then(() => sendResponse({ ok: true })); return true; }
   if (msg.type === 'hls-progress') { hlsProgress(msg); return; }
   if (msg.type === 'hls-done') { hlsDone(msg); return; }
   if (msg.type === 'download') {
@@ -903,12 +905,14 @@ let hlsStarting = false;
 let hlsProbing = 0;
 // 목록은 여러 소식이 거의 동시에 오므로 한 줄로 세워 차례대로 고친다
 let hlsQueue = Promise.resolve();
+let lastJobs = []; // 읽기·쓰기가 실패해도 빈 목록으로 보이지 않게 마지막으로 알던 목록
 const jobsEdit = fn => (hlsQueue = hlsQueue.then(async () => {
   const { hlsJobs = [] } = await chrome.storage.session.get('hlsJobs');
   const next = await fn(hlsJobs);
   if (next) await chrome.storage.session.set({ hlsJobs: next });
-  return next || hlsJobs;
-}).catch(e => { console.warn('스트리밍 목록 기록 실패', e); return []; }));
+  return (lastJobs = next || hlsJobs);
+}).catch(e => { console.warn('스트리밍 목록 기록 실패', e); return lastJobs; }));
+const isLiveJob = j => j.live || j.liveHint;
 const failed = (job, error) => ({ ...job, state: 'error', error, endedAt: Date.now() });
 
 // 지금의 목록. 받는 중이라고 적혀 있어도 숨겨진 페이지가 사라졌거나 소식이 오래 끊겼으면(메모리 부족으로 죽은 경우 등)
@@ -916,14 +920,17 @@ const failed = (job, error) => ({ ...job, state: 'error', error, endedAt: Date.n
 async function jobsNow() {
   let changed = false;
   const jobs = await jobsEdit(async list => {
-    const running = list.find(j => j.state === 'running');
-    if (!running || hlsStarting) return;
-    const silent = Date.now() - (running.beat || running.startedAt);
-    const gone = silent > 5000 && !(await chrome.offscreen.hasDocument());
-    if (!gone && silent < HLS_SILENT_MS) return;
-    chrome.runtime.sendMessage({ type: 'offscreen-hls-cancel', job: running.id }).catch(() => {});
+    if (hlsStarting || !list.some(j => j.state === 'running')) return;
+    const doc = await chrome.offscreen.hasDocument();
+    const dead = list.filter(j => {
+      if (j.state !== 'running') return false;
+      const silent = Date.now() - (j.beat || j.startedAt);
+      return (silent > 5000 && !doc) || silent >= HLS_SILENT_MS;
+    });
+    if (!dead.length) return;
+    for (const j of dead) chrome.runtime.sendMessage({ type: 'offscreen-hls-cancel', job: j.id }).catch(() => {});
     changed = true;
-    return list.map(j => (j === running ? failed(j, '받는 도중 멈췄습니다. 다시 시도해 주세요. 영상이 아주 크면 위의 녹화를 이용해 주세요.') : j));
+    return list.map(j => (dead.includes(j) ? failed(j, '받는 도중 멈췄습니다. 다시 시도해 주세요. 영상이 아주 크면 위의 녹화를 이용해 주세요.') : j));
   });
   if (changed) pump();
   return jobs;
@@ -956,14 +963,20 @@ let ruleQueue = Promise.resolve();
 const ruleFor = (origin, r) => ({ id: r.id, priority: 1,
   action: { type: 'modifyHeaders', requestHeaders: [{ header: 'referer', operation: 'set', value: origin + '/' }, { header: 'origin', operation: 'set', value: origin }] },
   condition: { requestDomains: r.hosts, initiatorDomains: [chrome.runtime.id], tabIds: [-1], excludedRequestDomains: TIKTOK_CDN, resourceTypes: ['xmlhttprequest', 'other'] } });
-function allowHost(origin, host) {
+function allowHost(origin, host, job = '') {
   ruleQueue = ruleQueue.then(async () => {
     if (!/^https?:\/\//.test(origin || '') || !/^[a-z0-9.-]+$/i.test(host || '')) return;
     host = host.toLowerCase();
-    const { hlsRules = {} } = await chrome.storage.session.get('hlsRules');
+    const [{ hlsRules = {} }, { hlsJobs = [] }] = await Promise.all([chrome.storage.session.get('hlsRules'), chrome.storage.session.get('hlsJobs')]);
     const touched = new Set();
-    // 같은 서버를 다른 페이지가 쓰고 있었으면 지금 것으로 옮긴다
-    for (const [o, r] of Object.entries(hlsRules)) if (o !== origin && r.hosts.includes(host)) { r.hosts = r.hosts.filter(h => h !== host); touched.add(o); }
+    // 같은 서버를 다른 페이지가 쓰고 있었으면 지금 것으로 옮긴다.
+    // 단, 받는 중인 작업이 그 서버를 쓰고 있으면 옮기지 않는다 (화질 확인 등 때문에 받던 영상이 거절되지 않게).
+    const busyOrigins = new Set(hlsJobs.filter(j => j.state === 'running' && j.id !== job).map(j => j.origin));
+    for (const [o, r] of Object.entries(hlsRules)) {
+      if (o === origin || !r.hosts.includes(host)) continue;
+      if (busyOrigins.has(o)) return;
+      r.hosts = r.hosts.filter(h => h !== host); touched.add(o);
+    }
     let r = hlsRules[origin];
     if (!r) { const used = new Set(Object.values(hlsRules).map(x => x.id)); let id = 10; while (used.has(id)) id++; r = hlsRules[origin] = { id, hosts: [] }; }
     if (!r.hosts.includes(host)) { r.hosts.push(host); touched.add(origin); }
@@ -1016,7 +1029,7 @@ async function hlsEnqueue(msg) {
     tabId: msg.tabId, title: String(msg.title || '').slice(0, 200), pageUrl: msg.pageUrl, incognito: !!tab?.incognito,
     urls: list, origin: originOf(list, msg.pageUrl), hint: Number(msg.hint) > 0 ? Number(msg.hint) : 0,
     variant: typeof msg.variant === 'string' ? msg.variant : '', audio: typeof msg.audio === 'string' ? msg.audio : '',
-    variantLabel: typeof msg.variantLabel === 'string' ? msg.variantLabel.slice(0, 40) : '',
+    variantLabel: typeof msg.variantLabel === 'string' ? msg.variantLabel.slice(0, 40) : '', liveHint: !!msg.live,
     direct: !!msg.urls?.length, done: 0, total: 0, bytes: 0, seconds: 0, live: false, quality: '',
   };
   let position = 0;
@@ -1037,8 +1050,12 @@ function pump() {
   pumping = pumping.then(async () => {
     let job = null;
     await jobsEdit(list => {
-      if (list.some(j => j.state === 'running')) return;
-      const next = list.find(j => j.state === 'queued');
+      // 보통은 한 번에 하나. 받는 중인 것이 생방송뿐이면, 생방송이 아닌 영상 하나를 함께 받는다
+      // (생방송은 정지할 때까지 끝나지 않으므로, 뒤에 더한 영상이 몇 시간씩 기다리지 않게).
+      const run = list.filter(j => j.state === 'running');
+      let next = null;
+      if (!run.length) next = list.find(j => j.state === 'queued');
+      else if (run.length === 1 && isLiveJob(run[0])) next = list.find(j => j.state === 'queued' && !isLiveJob(j));
       if (!next) return;
       job = { ...next, state: 'running', startedAt: Date.now(), beat: Date.now() };
       return list.map(j => (j.id === next.id ? job : j));
@@ -1082,12 +1099,15 @@ async function hlsCancel(id) {
 function hlsClear() {
   return jobsEdit(list => list.filter(j => ACTIVE.has(j.state)));
 }
-function hlsProgress({ job, done, total, bytes, seconds, live, quality }) {
-  return jobsEdit(list => {
+async function hlsProgress({ job, done, total, bytes, seconds, live, quality }) {
+  let becameLive = false;
+  await jobsEdit(list => {
     const j = list.find(x => x.id === job);
     if (j?.state !== 'running') return;
+    becameLive = !!live && !j.live;
     return list.map(x => (x === j ? { ...x, done, total, bytes, seconds: seconds || 0, live: !!live, quality: quality || x.quality, beat: Date.now() } : x));
   });
+  if (becameLive) pump(); // 생방송인 것이 드러났으면, 기다리던 다른 영상을 함께 받기 시작한다
 }
 async function hlsDone(res) {
   let blobUrl = res.ok ? res.url : '';

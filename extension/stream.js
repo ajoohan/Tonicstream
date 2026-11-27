@@ -64,19 +64,21 @@ async function fetchOnce(url, { range, signal, fresh }) {
 }
 
 // 받으려는 서버(호스트)를 배경에 알려, 그 서버로 가는 요청에만 원래 페이지의 Referer·Origin이 붙게 한다.
-// 출처(origin)는 작업마다 정해져 있으며, 요청 취소 신호(signal)에 붙여 함께 넘긴다 (signal.tsOrigin).
-const allowed = new Map(); // "출처|호스트" → 등록 작업
+// 출처(origin)·작업 번호와 이미 알린 서버 목록은 작업(또는 화질 확인)마다 따로 두고, 요청 취소 신호(signal)에 붙여 넘긴다.
+// (작업마다 새로 알리므로, 배경이 그사이 규칙을 거뒀어도 다시 붙는다)
+function tagSignal(signal, origin, job, from = null) {
+  signal.tsOrigin = from ? from.tsOrigin : origin || '';
+  signal.tsJob = from ? from.tsJob : job || '';
+  signal.tsAllowed = from ? from.tsAllowed : new Map();
+  return signal;
+}
 function allowHost(url, signal) {
-  const origin = signal?.tsOrigin;
+  const origin = signal?.tsOrigin, allowed = signal?.tsAllowed;
   let host = '';
   try { host = new URL(url).hostname; } catch {}
-  if (!origin || !host) return null;
-  const key = `${origin}|${host}`;
-  if (!allowed.has(key)) {
-    allowed.set(key, chrome.runtime.sendMessage({ type: 'hls-host', origin, host }).catch(() => {}));
-    setTimeout(() => allowed.delete(key), 10 * 60_000); // 배경이 규칙을 거둘 수 있으므로 가끔 다시 알린다
-  }
-  return allowed.get(key);
+  if (!origin || !host || !allowed) return null;
+  if (!allowed.has(host)) allowed.set(host, chrome.runtime.sendMessage({ type: 'hls-host', origin, host, job: signal.tsJob }).catch(() => {}));
+  return allowed.get(host);
 }
 
 async function fetchRetry(url, { range = null, signal, text = false, fresh = false, meta = false } = {}) {
@@ -508,14 +510,15 @@ function feeder(name, writer) {
 }
 
 // ── 작업 하나 ──
-let current = null; // { ctl, stop, wake }
+// 받는 중인 작업들 (작업 번호 → 작업). 보통 하나지만, 생방송을 받는 동안에는 다른 영상 하나를 함께 받을 수 있다.
+const running = new Map();
 
 async function runJob(msg, report) {
   const ctl = new AbortController();
-  ctl.signal.tsOrigin = msg.origin || '';
+  tagSignal(ctl.signal, msg.origin, msg.job);
   const job = { id: msg.job, ctl, stopped: false, wake: null, netError: null };
-  current = job;
-  try { return await runJobInner(msg, report, job); } finally { if (current === job) current = null; }
+  running.set(job.id, job);
+  try { return await runJobInner(msg, report, job); } finally { running.delete(job.id); }
 }
 
 async function runJobInner(msg, report, job) {
@@ -547,7 +550,7 @@ async function runJobInner(msg, report, job) {
     // 멈추거나 끝날 때는 미리 받기 시작한 요청도 함께 그만둔다.
     const process = async items => {
       const batch = new AbortController();
-      batch.signal.tsOrigin = signal.tsOrigin;
+      tagSignal(batch.signal, '', '', signal);
       const stopBatch = () => batch.abort();
       signal.addEventListener('abort', stopBatch, { once: true });
       const fetchOne = it => fetchRetry(it.url, { range: it.range, signal: batch.signal }).then(b => (it.key && !it.init ? decrypt(b, it, keys, batch.signal) : b));
@@ -655,7 +658,7 @@ const fmtBytes = b => (b >= 1024 ** 3 ? `${(b / 1024 ** 3).toFixed(1)}GB` : `${M
 // 받기 전에 고를 수 있는 화질·소리와 길이를 알려 준다
 async function probe(msg) {
   const ctl = new AbortController();
-  ctl.signal.tsOrigin = msg.origin || '';
+  tagSignal(ctl.signal, msg.origin, 'probe');
   const timer = setTimeout(() => ctl.abort(), 20_000);
   try {
     const entries = (msg.urls || []).map(u => (typeof u === 'string' ? { url: u, kind: /\.mpd(\?|$)/i.test(u) ? 'dash' : 'hls' } : u));
@@ -684,13 +687,12 @@ async function hlsRun(msg) {
   } finally { clearInterval(beat); }
 }
 
-let queue = Promise.resolve();
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (sender.tab) return; // 배경이 보낸 것만
-  // 취소·정지는 그 작업에만 (다른 작업 번호면 아무것도 하지 않는다)
-  const mine = current && (!msg.job || current.id === msg.job);
-  if (msg.type === 'offscreen-hls-cancel') { if (mine) current.ctl.abort(); sendResponse({ active: !!mine }); return; }
-  if (msg.type === 'offscreen-hls-stop') { if (mine) { current.stopped = true; current.wake?.(); } sendResponse({ active: !!mine }); return; }
+  // 취소·정지는 그 작업에만
+  const mine = running.get(msg.job);
+  if (msg.type === 'offscreen-hls-cancel') { mine?.ctl.abort(); sendResponse({ active: !!mine }); return; }
+  if (msg.type === 'offscreen-hls-stop') { if (mine) { mine.stopped = true; mine.wake?.(); } sendResponse({ active: !!mine }); return; }
   if (msg.type === 'offscreen-hls-probe') { probe(msg).then(sendResponse); return true; }
   if (msg.type === 'offscreen-revoke' && diskFiles.has(msg.url)) {
     // 지운 뒤에 답한다. 배경은 이 답을 기다렸다가 숨겨진 페이지를 닫는다 (임시 파일이 남지 않게).
@@ -699,8 +701,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     removeDisk(name).then(() => sendResponse({ ok: true }));
     return true;
   }
-  if (msg.type !== 'offscreen-hls') return;
-  // 한 번에 하나만. 배경은 앞 작업이 끝난 뒤에 다음 것을 보낸다. 그런데도 앞 작업이 남아 있으면(배경이 멈춘 것으로 보고 넘어간 경우) 그만두게 한다.
-  current?.ctl.abort();
-  queue = queue.then(() => hlsRun(msg)).catch(() => {});
+  if (msg.type !== 'offscreen-hls' || running.has(msg.job)) return;
+  // 언제 몇 개를 받을지는 배경이 정한다 (보통 하나, 생방송 중에는 하나 더)
+  hlsRun(msg).catch(() => {});
 });
