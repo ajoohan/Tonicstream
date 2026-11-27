@@ -205,15 +205,16 @@ function streamCard(stream, jobs) {
     if (p.variants.length > 1) parts.push(sel(p.variants, 'variant', '화질'));
     if (p.audios.length > 1) parts.push(sel(p.audios, 'audio', '소리'));
   } else info = p ? p.error : '화질을 확인하는 중…';
-  const busy = jobs.some(isActive);
+  // 받는 중인 것이 생방송뿐이면 이 영상은 바로 함께 받는다
+  const busy = p?.live ? jobs.some(isActive) : jobs.some(j => isActive(j) && !(j.live || j.liveHint));
   row.append(el('button', { className: 'primary', textContent: busy ? '다운로드 목록에 추가' : p?.live ? '생방송 받기 시작' : '스트리밍 영상 받기', onclick: async e => {
     e.target.disabled = true; // 연달아 눌러도 한 번만
     // 한 탭에서 영상을 여러 개 봤으면 조각 목록도 여러 개다. 지금 보는 영상의 길이를 알려 주어 맞는 것을 고르게 한다.
     const label = p?.variants?.find(v => v.id === pick.variant)?.label || '';
     const res = await chrome.runtime.sendMessage({ type: 'hls-start', tabId: tab.id, title: tab.title, pageUrl: tab.url, hint: mainDuration,
       variant: pick.variant, audio: pick.audio, variantLabel: label, live: !!p?.live });
-    say(!res?.ok ? res?.error || '시작하지 못했습니다.' : res.position > 1 ? `다운로드 목록에 추가했습니다. (${res.position}번째) 다른 페이지로 옮겨도 계속 받습니다.`
-      : '받기 시작했습니다. 다른 페이지로 옮기거나 이 창을 닫아도 계속 받습니다.');
+    say(!res?.ok ? res?.error || '시작하지 못했습니다.' : res.started ? '받기 시작했습니다. 다른 페이지로 옮기거나 이 창을 닫아도 계속 받습니다.'
+      : `다운로드 목록에 추가했습니다. (${res.position}번째) 다른 페이지로 옮겨도 계속 받습니다.`);
     setTimeout(() => { e.target.disabled = false; }, 1500);
     renderJobs();
   } }));
@@ -227,7 +228,7 @@ let jobsTimer = null;
 function jobRow(j, order) {
   const pct = j.total ? Math.round(j.done / j.total * 100) : 0;
   let line = '', barPct = 0;
-  if (j.state === 'queued') line = `대기 중 · ${order}번째${j.variantLabel ? ` · ${j.variantLabel}` : ''}`;
+  if (j.state === 'queued') line = `대기 중 · ${order}번째${j.variantLabel ? ` · ${j.variantLabel}` : ''}${j.afterLive ? ' · 같은 영상 서버를 쓰는 다른 다운로드가 끝나면 받습니다' : ''}`;
   else if (j.state === 'running') {
     if (j.live) line = `생방송 받는 중 · ${fmtTime(j.seconds)}${j.bytes ? ` · ${fmtSize(j.bytes)}` : ''}`;
     else if (j.total) {

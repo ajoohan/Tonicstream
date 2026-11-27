@@ -72,13 +72,16 @@ function tagSignal(signal, origin, job, from = null) {
   signal.tsAllowed = from ? from.tsAllowed : new Map();
   return signal;
 }
-function allowHost(url, signal) {
+// 같은 영상 서버를 다른 사이트의 작업이 쓰고 있어서 함께 받을 수 없는 경우. 배경이 이 작업을 목록에 되돌려 두었다가 나중에 받는다.
+class SlotBusy extends Error {}
+async function allowHost(url, signal) {
   const origin = signal?.tsOrigin, allowed = signal?.tsAllowed;
   let host = '';
   try { host = new URL(url).hostname; } catch {}
-  if (!origin || !host || !allowed) return null;
-  if (!allowed.has(host)) allowed.set(host, chrome.runtime.sendMessage({ type: 'hls-host', origin, host, job: signal.tsJob }).catch(() => {}));
-  return allowed.get(host);
+  if (!origin || !host || !allowed) return;
+  if (!allowed.has(host)) allowed.set(host, chrome.runtime.sendMessage({ type: 'hls-host', origin, host, job: signal.tsJob }).catch(() => null));
+  const res = await allowed.get(host);
+  if (res?.busy && signal.tsJob !== 'probe') throw new SlotBusy('함께 받을 수 없어 기다립니다');
 }
 
 async function fetchRetry(url, { range = null, signal, text = false, fresh = false, meta = false } = {}) {
@@ -355,7 +358,7 @@ async function loadPresentation(entries, hint, signal) {
       const pl = parsePlaylist(text, url);
       if (pl.variants.length) { pl.variants.forEach(v => inMaster.add(v.url)); cands.push(await hlsMaster(pl, getText, signal)); }
       else if (pl.segments.length) cands.push({ pl });
-    } catch (e) { if (signal.aborted) throw e; if (/DRM/.test(e.message)) cands.push({ error: e }); }
+    } catch (e) { if (signal.aborted || e instanceof SlotBusy) throw e; if (/DRM/.test(e.message)) cands.push({ error: e }); }
   }
   // 화질 목록에 딸린 조각 목록은 화질 목록 쪽에서 대표로 다룬다
   const all = cands.map(c => (c.pl ? (inMaster.has(c.pl.url) ? null : hlsMedia(c.pl)) : c)).filter(Boolean);
@@ -444,7 +447,7 @@ async function dashPresentation(m, signal) {
         // 구간 하나를 읽지 못해도(길이 정보가 없는 광고 구간 등) 나머지는 받는다
         let lists;
         try { lists = await Promise.all([pv, ...(a ? [pa] : [])].map(r => dashSegments(r, p.dur, signal))); } catch (e) {
-          if (signal.aborted) throw e;
+          if (signal.aborted || e instanceof SlotBusy) throw e;
           skipped += p.dur || 1; continue;
         }
         lists.forEach((segs, k) => segs.forEach((g, i) => out[k].segments.push({ ...g, start: at + g.start, disc: i === 0 && out[k].segments.length > 0 })));
@@ -531,6 +534,8 @@ async function runJobInner(msg, report, job) {
   const quality = pres.variants.find(v => v.id === variantId)?.label || '';
 
   const sink = await openSink();
+  // 디스크에 쓸 수 없어 메모리에 모아야 하는데 다른 작업도 받는 중이면, 메모리가 모자랄 수 있으므로 함께 받지 않는다
+  if (!sink.disk && running.size > 1) { await sink.abort(); throw new SlotBusy('함께 받을 수 없어 기다립니다'); }
   const cap = sink.disk ? MAX_DISK : MAX_MEMORY;
   try {
     const est = pres.live ? 0 : pres.est(variantId);
@@ -683,7 +688,7 @@ async function hlsRun(msg) {
     const res = await runJob(msg, p => { state = p; if (Date.now() - last > 500 || p.done === p.total) send(); });
     await chrome.runtime.sendMessage({ type: 'hls-done', job: msg.job, ok: true, ...res });
   } catch (e) {
-    await chrome.runtime.sendMessage({ type: 'hls-done', job: msg.job, ok: false, error: e.name === 'AbortError' ? '취소했습니다.' : e.message }).catch(() => {});
+    await chrome.runtime.sendMessage({ type: 'hls-done', job: msg.job, ok: false, slotBusy: e instanceof SlotBusy, error: e.name === 'AbortError' ? '취소했습니다.' : e.message }).catch(() => {});
   } finally { clearInterval(beat); }
 }
 
