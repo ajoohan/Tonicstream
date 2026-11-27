@@ -361,7 +361,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === 'hls-stop') { hlsStop(String(msg.id)).then(() => sendResponse({ ok: true })); return true; }
   if (msg.type === 'hls-cancel') { hlsCancel(String(msg.id)).then(() => sendResponse({ ok: true })); return true; }
   if (msg.type === 'hls-clear') { hlsClear().then(() => sendResponse({ ok: true })); return true; }
-  if (msg.type === 'hls-host') { allowHost(msg.origin, msg.host, msg.job).then(() => sendResponse({ ok: true })); return true; }
+  if (msg.type === 'hls-host') { allowHost(msg.origin, msg.host, msg.job).then(r => sendResponse({ ok: !r.busy, busy: r.busy })); return true; }
   if (msg.type === 'hls-progress') { hlsProgress(msg); return; }
   if (msg.type === 'hls-done') { hlsDone(msg); return; }
   if (msg.type === 'download') {
@@ -964,6 +964,7 @@ const ruleFor = (origin, r) => ({ id: r.id, priority: 1,
   action: { type: 'modifyHeaders', requestHeaders: [{ header: 'referer', operation: 'set', value: origin + '/' }, { header: 'origin', operation: 'set', value: origin }] },
   condition: { requestDomains: r.hosts, initiatorDomains: [chrome.runtime.id], tabIds: [-1], excludedRequestDomains: TIKTOK_CDN, resourceTypes: ['xmlhttprequest', 'other'] } });
 function allowHost(origin, host, job = '') {
+  let blocked = false;
   ruleQueue = ruleQueue.then(async () => {
     if (!/^https?:\/\//.test(origin || '') || !/^[a-z0-9.-]+$/i.test(host || '')) return;
     host = host.toLowerCase();
@@ -974,7 +975,7 @@ function allowHost(origin, host, job = '') {
     const busyOrigins = new Set(hlsJobs.filter(j => j.state === 'running' && j.id !== job).map(j => j.origin));
     for (const [o, r] of Object.entries(hlsRules)) {
       if (o === origin || !r.hosts.includes(host)) continue;
-      if (busyOrigins.has(o)) return;
+      if (busyOrigins.has(o)) { blocked = true; return; }
       r.hosts = r.hosts.filter(h => h !== host); touched.add(o);
     }
     let r = hlsRules[origin];
@@ -989,7 +990,7 @@ function allowHost(origin, host, job = '') {
     await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds, addRules });
     await chrome.storage.session.set({ hlsRules });
   }).catch(e => console.warn('Referer 규칙 등록 실패', e));
-  return ruleQueue;
+  return ruleQueue.then(() => ({ busy: blocked }));
 }
 // 받는 것도, 알아보는 것도 없으면 규칙을 모두 거둔다
 function dropRulesIfIdle() {
@@ -1040,8 +1041,10 @@ async function hlsEnqueue(msg) {
     position = next.filter(j => ACTIVE.has(j.state)).length;
     return next;
   });
-  pump();
-  return { ok: true, id: job.id, position };
+  await pump();
+  // 바로 시작했는지(생방송과 함께 받는 경우 포함), 몇 번째로 기다리는지 알려 준다
+  const now = (await jobsEdit(() => null)).find(j => j.id === job.id);
+  return { ok: true, id: job.id, position, started: now?.state === 'running' };
 }
 
 // 받는 중인 것이 없으면 대기 중인 다음 항목을 시작한다
@@ -1055,7 +1058,7 @@ function pump() {
       const run = list.filter(j => j.state === 'running');
       let next = null;
       if (!run.length) next = list.find(j => j.state === 'queued');
-      else if (run.length === 1 && isLiveJob(run[0])) next = list.find(j => j.state === 'queued' && !isLiveJob(j));
+      else if (run.length === 1 && isLiveJob(run[0])) next = list.find(j => j.state === 'queued' && !isLiveJob(j) && !j.afterLive);
       if (!next) return;
       job = { ...next, state: 'running', startedAt: Date.now(), beat: Date.now() };
       return list.map(j => (j.id === next.id ? job : j));
@@ -1115,7 +1118,9 @@ async function hlsDone(res) {
     const j = list.find(x => x.id === res.job);
     if (!j || j.state !== 'running') return; // 지난 작업(취소·중단 처리된 것)의 소식
     let next;
-    if (!res.ok) next = /취소/.test(res.error || '') ? { ...j, state: 'canceled', endedAt: Date.now() } : failed(j, res.error || '받지 못했습니다.');
+    // 함께 받을 수 없었던 것(같은 영상 서버를 쓰는 다른 작업이 있음): 목록에 되돌려 두고, 앞 작업이 끝난 뒤 받는다
+    if (!res.ok && res.slotBusy) next = { ...j, state: 'queued', afterLive: true, done: 0, total: 0, bytes: 0, seconds: 0 };
+    else if (!res.ok) next = /취소/.test(res.error || '') ? { ...j, state: 'canceled', endedAt: Date.now() } : failed(j, res.error || '받지 못했습니다.');
     else {
       try {
         const filename = await buildName(j.title, j.pageUrl, res.audioOnly ? 'm4a' : 'mp4', { suffix: res.partial ? '일부' : '' });
