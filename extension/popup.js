@@ -286,6 +286,32 @@ chrome.storage.onChanged.addListener((changes, area) => {
   }
 });
 
+// 진단 정보 복사: 사이트가 바뀌어 감지가 안 될 때 원인을 찾는 데 쓴다
+async function copyDiag() {
+  const [bg, frames] = await Promise.all([
+    chrome.runtime.sendMessage({ type: 'diag', tabId: tab.id }).catch(() => null),
+    Promise.all((frameIds || [0]).map(frameId => Promise.race([
+      chrome.tabs.sendMessage(tab.id, { type: 'diag' }, { frameId }).catch(() => null), new Promise(r => setTimeout(() => r(null), 1500))]))),
+  ]);
+  let site = '';
+  try { const u = new URL(tab.url); site = `${u.hostname}${u.pathname}`; } catch {}
+  const lines = [`Tonicstream ${chrome.runtime.getManifest().version} 진단 · ${new Date().toISOString().slice(0, 16)}`, `페이지: ${site}`,
+    `스트리밍 감지: ${bg?.streamAny ? '예' : '아니요'} · 목록 ${bg?.lists?.length || 0}개 · 원본 파일 ${bg?.files?.length || 0}개`];
+  for (const l of bg?.lists || []) lines.push(`  목록: ${l}`);
+  for (const f of bg?.files || []) lines.push(`  파일: ${f}`);
+  lines.push('네트워크(최근):');
+  for (const n of bg?.net || []) lines.push(`  ${n.kind || '-'} ${n.type || '?'} ${n.size || ''} ${n.host}${n.path} ${n.query}`);
+  for (const f of frames.filter(Boolean)) {
+    lines.push(`프레임 ${f.top ? '(맨 위)' : ''}: ${f.frame}`);
+    for (const v of f.videos) lines.push(`  영상: ${v}`);
+    for (const i of f.iframes) lines.push(`  끼워 넣은 프레임: ${i}`);
+    for (const p of f.perf) lines.push(`  요청: ${p}`);
+  }
+  const text = lines.join('\n');
+  try { await navigator.clipboard.writeText(text); say('진단 정보를 복사했습니다. 담당자에게 붙여 넣어 보내 주세요.'); }
+  catch { say('복사하지 못했습니다. 아래 내용을 직접 복사해 주세요.'); $('#msg').textContent += '\n' + text; }
+}
+
 // 주소로 직접 받기: 개발자 도구 등에서 찾은 영상 주소(mp4·m3u8·mpd)를 넣어 받는다
 async function directDownload() {
   const url = $('#direct-url').value.trim();
@@ -553,6 +579,7 @@ async function checkUpdate() {
     $('#pagecap').disabled = false;
   };
   $('#direct-go').onclick = directDownload;
+  $('#diag').onclick = copyDiag;
   $('#jobs-clear').onclick = async () => { await chrome.runtime.sendMessage({ type: 'hls-clear' }); renderJobs(); };
   $('#direct-url').onkeydown = e => { if (e.key === 'Enter') directDownload(); };
   $('#library').onclick = () => { chrome.tabs.create({ url: 'library.html' }); window.close(); };
