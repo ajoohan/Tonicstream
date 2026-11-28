@@ -82,6 +82,7 @@ async function allowHost(url, signal) {
   if (!origin || !host || !allowed) return;
   if (!allowed.has(host)) allowed.set(host, chrome.runtime.sendMessage({ type: 'hls-host', origin, host, job: signal.tsJob }).catch(() => null));
   const res = await allowed.get(host);
+  if (!res) { allowed.delete(host); return; } // 알리지 못했으면 다음 요청 때 다시 알린다
   if (res?.busy) {
     if (signal.tsJob === 'probe') { signal.tsBusy = true; return; } // 화질 확인은 그대로 해 보고, 실패하면 이유를 알려 준다
     throw new SlotBusy('함께 받을 수 없어 기다립니다');
@@ -539,7 +540,8 @@ async function runJobInner(msg, report, job) {
 
   const sink = await openSink();
   // 디스크에 쓸 수 없어 메모리에 모아야 하는데 다른 작업도 받는 중이면, 메모리가 모자랄 수 있으므로 함께 받지 않는다
-  if (!sink.disk && running.size > 1) { await sink.abort(); throw new SlotBusy('함께 받을 수 없어 기다립니다', 'memory'); }
+  // (먼저 시작한 작업은 계속 받고, 나중에 시작한 이 작업이 기다린다. 생방송이 밀려나지 않게)
+  if (!sink.disk && running.size > 1 && running.keys().next().value !== job.id) { await sink.abort(); throw new SlotBusy('함께 받을 수 없어 기다립니다', 'memory'); }
   const cap = sink.disk ? MAX_DISK : MAX_MEMORY;
   try {
     const est = pres.live ? 0 : pres.est(variantId);

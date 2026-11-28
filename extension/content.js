@@ -522,6 +522,7 @@ if (!(() => { try { return typeof window.__tonicstream === 'function' && window.
 
     let screen = false; // 탭 화면을 찍어 쓰는 방식
     let thumb = '';
+    let first = true;   // 처음으로 불러온 장면인지 (첫 칸을 못 불러와도 그다음 장면에서 확인·준비를 한다)
     try {
       v.pause();
       for (let i = 0; i < n; i++) {
@@ -544,7 +545,7 @@ if (!(() => { try { return typeof window.__tonicstream === 'function' && window.
         let drawn = false;
         if (!screen) {
           // 그림을 꺼낼 수 없는 영상(다른 도메인)을 한 번이라도 그리면 시트 전체가 막히므로, 작은 시험용 그림판에서 먼저 확인한다
-          if (i === 0) {
+          if (first) {
             try { const t1 = document.createElement('canvas'); t1.width = t1.height = 2; const c1 = t1.getContext('2d'); c1.drawImage(v, 0, 0, 2, 2); c1.getImageData(0, 0, 1, 1); }
             catch { screen = true; }
           }
@@ -552,10 +553,10 @@ if (!(() => { try { return typeof window.__tonicstream === 'function' && window.
         }
         if (!drawn) {
           if (window !== top) throw new Error('다른 사이트에서 끼워 넣은 영상이라 콘티를 만들 수 없습니다. 장면 캡처를 이용해 주세요.');
-          if (i === 0) { v.scrollIntoView({ block: 'center' }); if (bar) bar.style.display = 'none'; if (hb) hb.style.display = 'none'; }
+          if (first) { v.scrollIntoView({ block: 'center' }); if (bar) bar.style.display = 'none'; if (hb) hb.style.display = 'none'; }
           // 안내 문구가 찍히지 않게 숨긴다
           for (const t of document.querySelectorAll('[data-tonicstream-toast]')) t.style.display = 'none';
-          await new Promise(r => setTimeout(r, i ? 560 : 300)); // 탭 화면 찍기는 1초에 2번까지
+          await new Promise(r => setTimeout(r, first ? 300 : 560)); // 탭 화면 찍기는 1초에 2번까지
           const res = await tell({ type: 'capture-visible' });
           if (!res?.ok) throw new Error(res?.error || '화면을 찍지 못했습니다.');
           const img = new Image(); img.src = res.dataUrl; await img.decode();
@@ -567,7 +568,8 @@ if (!(() => { try { return typeof window.__tonicstream === 'function' && window.
               x + (vx - r.left) / r.width * cw, y + (vy - r.top) / r.height * ch, (vx2 - vx) / r.width * cw, (vy2 - vy) / r.height * ch);
           }
         }
-        if (i === 0) {
+        if (first) {
+          first = false;
           const tc = document.createElement('canvas'); tc.width = 240; tc.height = Math.round(240 * ch / cw);
           tc.getContext('2d').drawImage(canvas, x, y, cw, ch, 0, 0, tc.width, tc.height);
           try { thumb = tc.toDataURL('image/jpeg', 0.6); } catch {}
@@ -601,7 +603,15 @@ if (!(() => { try { return typeof window.__tonicstream === 'function' && window.
     const num = x => { const n = Number(String(x ?? '').replace(/[^\d]/g, '')); return Number.isFinite(n) ? n : 0; };
     // 피드형 사이트(틱톡·릴스·쇼츠)는 페이지를 새로 불러오지 않고 영상만 바꾼다. 그때 페이지에 들어 있는 정보는
     // 처음 연 영상의 것이므로, 지금 주소와 같은 영상의 정보일 때만 쓴다. (다른 영상의 계정·해시태그가 기록되지 않게)
-    const norm = u => { if (!u) return ''; try { return new URL(u, location.href).pathname.replace(/\/+$/, '') || '/'; } catch { return ''; } };
+    // 주소 비교: 경로와 영상을 가리키는 값(유튜브 ?v= 등)까지. 추적용 값(utm_ 등)은 뺀다.
+    const norm = u => {
+      if (!u) return '';
+      try {
+        const x = new URL(u, location.href);
+        const q = [...x.searchParams].filter(([k]) => !/^(utm_|fbclid|gclid|si$|feature$|pp$|t$)/.test(k)).sort().map(([k, v]) => `${k}=${v}`).join('&');
+        return (x.pathname.replace(/\/+$/, '') || '/') + (q ? `?${q}` : '');
+      } catch { return ''; }
+    };
     const here = norm(location.href);
     const loaded = norm(performance.getEntriesByType('navigation')[0]?.name || location.href);
     const fresh = loaded === here

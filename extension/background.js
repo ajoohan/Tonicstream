@@ -343,6 +343,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
   if (msg.type === 'has-stream') { streamTabsReady.then(() => sendResponse(streamTabs.has(msg.tabId))); return true; }
   if (msg.type === 'get-stream') {
+    // 확장 화면(팝업)만 목록을 본다. 웹페이지에 들어간 content.js에는 알려 주지 않는다.
+    if (!_sender.url?.startsWith(chrome.runtime.getURL(''))) { sendResponse({ any: false, lists: [], jobs: [] }); return; }
     Promise.all([streamTabsReady, jobsNow()]).then(([, jobs]) =>
       // 시크릿 창에서 더한 다운로드는 시크릿 창의 팝업에서만 보인다
       sendResponse({ any: streamTabs.has(msg.tabId), lists: streamTabs.get(msg.tabId)?.hls || [],
@@ -868,10 +870,11 @@ function importLibrary(list) {
     library.sort((a, b) => b.ts - a.ts);
     // 한도를 넘으면 저장할 때와 같은 규칙으로: 표시(보드·별점·메모·태그)가 없는 오래된 기록부터 뺀다
     const marked = x => x.board || x.rating || x.memo || x.tags;
-    while (library.length > LIBRARY_HARD_MAX) {
+    while (library.length > LIBRARY_MAX) {
       let i = library.length - 1;
       while (i > 0 && marked(library[i])) i--;
-      library.splice(i > 0 ? i : library.length - 1, 1);
+      if (i === 0) { if (library.length > LIBRARY_HARD_MAX) library.pop(); else break; }
+      else library.splice(i, 1);
     }
     added = library.filter(x => fresh.has(x.id)).length; // 실제로 남은 것만 센다
     await saveLibrary(library);
@@ -958,7 +961,9 @@ function originOf(list, pageUrl) {
 // ── Referer·Origin 규칙 ──
 // 조각 서버가 Referer·Origin을 확인하는 경우가 많다. 숨겨진 페이지가 받으려는 서버(호스트)를 하나씩 알려 주면,
 // 그 서버로 가는 이 확장의 요청에만 원래 페이지 주소를 붙인다. 다른 요청(새 버전 확인, 다른 사이트의 원본 확인 등)은 건드리지 않는다.
-// 출처(origin)마다 규칙 하나: { [origin]: { id, hosts: [] } }
+// 출처(origin)마다 규칙 하나: { [origin]: { id, hosts: [], owners: { 호스트: 그 호스트를 등록한 작업 번호 } } }
+// 규칙은 하위 도메인까지 적용되므로, 한쪽이 다른 쪽의 하위 도메인이어도 같은 서버로 본다
+const sameHost = (a, b) => a === b || a.endsWith('.' + b) || b.endsWith('.' + a);
 let ruleQueue = Promise.resolve();
 const ruleFor = (origin, r) => ({ id: r.id, priority: 1,
   action: { type: 'modifyHeaders', requestHeaders: [{ header: 'referer', operation: 'set', value: origin + '/' }, { header: 'origin', operation: 'set', value: origin }] },
@@ -978,16 +983,25 @@ function allowHost(origin, host, job = '') {
     const myStart = me?.startedAt ?? Infinity;
     const yieldIds = [];
     for (const [o, r] of Object.entries(hlsRules)) {
-      if (o === origin || !r.hosts.includes(host)) continue;
-      const owners = hlsJobs.filter(j => j.state === 'running' && j.id !== job && j.origin === o);
+      if (o === origin) continue;
+      const clash = r.hosts.filter(h => sameHost(h, host));
+      if (!clash.length) continue;
+      // 그 서버를 실제로 등록한 작업 중 아직 받는 중인 것만 주인으로 본다 (끝난 작업·화질 확인이 남긴 것은 주인이 아니다)
+      const ownerIds = new Set(clash.map(h => r.owners?.[h]).filter(Boolean));
+      const owners = hlsJobs.filter(j => j.state === 'running' && j.id !== job && ownerIds.has(j.id));
       if (owners.some(j => (j.startedAt ?? 0) <= myStart)) { blocked = true; return; }
       yieldIds.push(...owners.map(j => j.id));
-      r.hosts = r.hosts.filter(h => h !== host); touched.add(o);
+      r.hosts = r.hosts.filter(h => !clash.includes(h));
+      for (const h of clash) delete r.owners?.[h];
+      touched.add(o);
     }
     for (const id of yieldIds) chrome.runtime.sendMessage({ type: 'offscreen-hls-yield', job: id }).catch(() => {});
     let r = hlsRules[origin];
-    if (!r) { const used = new Set(Object.values(hlsRules).map(x => x.id)); let id = 10; while (used.has(id)) id++; r = hlsRules[origin] = { id, hosts: [] }; }
+    if (!r) { const used = new Set(Object.values(hlsRules).map(x => x.id)); let id = 10; while (used.has(id)) id++; r = hlsRules[origin] = { id, hosts: [], owners: {} }; }
+    r.owners ||= {};
+    if (job && job !== 'probe') r.owners[host] = job; // 받는 작업이 쓰는 서버로 표시 (화질 확인은 표시하지 않는다)
     if (!r.hosts.includes(host)) { r.hosts.push(host); touched.add(origin); }
+    else if (job && job !== 'probe') await chrome.storage.session.set({ hlsRules }); // 주인 표시만 바뀐 경우
     if (!touched.size) return;
     const removeRuleIds = [], addRules = [];
     for (const o of touched) {

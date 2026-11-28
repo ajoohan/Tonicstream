@@ -278,7 +278,12 @@ let jobsSeen = '';
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'session' || !changes.hlsJobs) return;
   const sig = (changes.hlsJobs.newValue || []).map(j => `${j.id}:${j.state}`).join(',');
-  if (sig !== jobsSeen) { jobsSeen = sig; if (!pressing) renderJobs(); }
+  if (sig !== jobsSeen) {
+    jobsSeen = sig;
+    if (pressing) return;
+    // 이 페이지의 스트리밍 카드도 다시 그린다 (버튼 이름, 막혀 있던 화질 확인 다시 하기)
+    if (tab?.id && /^https?:|^file:/.test(tab.url || '')) renderFiles(); else renderJobs();
+  }
 });
 
 // 주소로 직접 받기: 개발자 도구 등에서 찾은 영상 주소(mp4·m3u8·mpd)를 넣어 받는다
