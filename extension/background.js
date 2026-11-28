@@ -41,8 +41,30 @@ function totalSize(headers) {
 const VIDEO_EXT = /\.(mp4|m4v|webm|mov|ogv|mkv)$/i;
 const EXT_OF_TYPE = { 'video/mp4': 'mp4', 'video/x-m4v': 'm4v', 'video/webm': 'webm', 'video/quicktime': 'mov', 'video/ogg': 'ogv', 'video/x-matroska': 'mkv' };
 // 조각 스트리밍(HLS·DASH)의 목록 파일. 이런 페이지는 영상이 조각으로 나뉘어 와서 원본 파일이 따로 없다.
-const STREAM_TYPE = /^application\/(vnd\.apple\.mpegurl|x-mpegurl|dash\+xml)$|^audio\/(x-)?mpegurl$/;
+const STREAM_TYPE = /^application\/(vnd\.apple\.mpegurl|x-mpegurl|dash\+xml)$|^audio\/(x-)?mpegurl$|^video\/vnd\.mpeg\.dash\.mpd$/;
 const STREAM_EXT = /\.(m3u8|mpd)$/i;
+// 주소 끝이 아니어도 목록 파일 이름이 들어 있으면 목록으로 본다 (…/master.m3u8/token, …/play?file=a.m3u8 등)
+const STREAM_IN_URL = /\.(m3u8|mpd)(?=$|[/?&#;]|%2f|%3f)/i;
+const SEGMENT_TYPE = /^video\/(mp2t|iso\.segment)$|^audio\/(aac|mp2t)$/;
+
+// 진단용: 탭마다 최근에 지나간 영상 관련 응답 몇 개 (주소의 인증값 등은 빼고 기록). 팝업의 "진단 정보 복사"에서 쓴다.
+const netLog = new Map(); // 탭 → [{ t, host, path, type, size, kind }]
+function logNet(tabId, url, type, size, kind) {
+  if (!netLog.has(tabId)) netLog.set(tabId, []);
+  const list = netLog.get(tabId);
+  const path = url.pathname.length > 120 ? url.pathname.slice(0, 60) + '…' + url.pathname.slice(-50) : url.pathname;
+  list.push({ t: Date.now(), host: url.hostname, path, query: url.search ? `(${url.search.length}자)` : '', type, size, kind });
+  if (list.length > 40) list.splice(0, list.length - 40);
+}
+// 영상과 관련 있어 보이는 응답인지 (진단 기록용)
+const mediaish = (type, url) => /^(video|audio)\/|mpegurl|dash|octet-stream/.test(type) || /\.(m3u8|mpd|ts|m4s|mp4|m4v|m4a|aac|webm|json)(?=$|[/?])/i.test(url.pathname) && /playlist|master|manifest|video|media|stream|hls|dash|seg|chunk|frag/i.test(url.href);
+
+// 사이트가 서비스 워커로 영상을 받으면 요청에 탭 번호가 없다(-1). 요청을 보낸 사이트(initiator)를 연 탭이 하나뿐이면 그 탭의 것으로 본다.
+async function tabOfInitiator(initiator) {
+  if (!/^https?:\/\//.test(initiator || '')) return -1;
+  const tabs = (await chrome.tabs.query({})).filter(t => { try { return new URL(t.url).origin === initiator; } catch { return false; } });
+  return tabs.length === 1 ? tabs[0].id : -1;
+}
 
 function looksLikeVideo(type, url, headers) {
   if (/^video\//.test(type)) return !/^video\/(mp2t|iso\.segment|vnd\.dlna\.mpeg-tts)$/.test(type); // TS 조각 제외
@@ -62,19 +84,30 @@ function isSegmentUrl(u) {
 
 chrome.webRequest.onHeadersReceived.addListener(
   async details => {
-    if (details.tabId < 0) return;
     if (details.documentLifecycle && details.documentLifecycle !== 'active') return; // 미리 불러오는 페이지의 것은 세지 않는다
     if (details.statusCode !== 200 && details.statusCode !== 206) return; // 리다이렉트·오류 응답 제외
     const type = header(details.responseHeaders, 'content-type').split(';')[0].trim().toLowerCase();
     const url = new URL(details.url);
-    if (STREAM_TYPE.test(type) || STREAM_EXT.test(url.pathname)) { markStream(details.tabId, details.timeStamp, details.url, /dash/.test(type) || /\.mpd$/i.test(url.pathname) ? 'dash' : 'hls', details.initiator); return; }
+    const isList = STREAM_TYPE.test(type) || STREAM_IN_URL.test(url.pathname + url.search);
+    let tabId = details.tabId;
+    if (tabId < 0) {
+      // 이 확장이 직접 보낸 요청은 건너뛴다. 사이트의 서비스 워커가 받은 목록이면 그 사이트를 연 탭의 것으로 본다.
+      if (!isList || !details.initiator || details.initiator.startsWith('chrome-extension://')) return;
+      tabId = await tabOfInitiator(details.initiator);
+      if (tabId < 0) return;
+    }
+    const size0 = totalSize(details.responseHeaders);
+    if (isList || mediaish(type, url)) logNet(tabId, url, type, size0, isList ? 'list' : '');
+    if (isList) { markStream(tabId, details.timeStamp, details.url, /dash/.test(type) || /\.mpd(?=$|[/?&#;])/i.test(url.pathname + url.search) ? 'dash' : 'hls', details.initiator); return; }
+    // 조각만 보이고 목록은 못 찾은 경우: 스트리밍 페이지라는 것만 기억한다 (팝업이 "원본 파일 없음" 대신 알맞은 안내를 하게)
+    if (SEGMENT_TYPE.test(type) || (isSegmentUrl(url) && /\.(ts|m4s)$/i.test(url.pathname))) { markStream(tabId, details.timeStamp, details.url, null, details.initiator); return; }
     if (!looksLikeVideo(type, url, details.responseHeaders) || isSegmentUrl(url)) return;
     const size = totalSize(details.responseHeaders);
     const sizeKnown = !!(header(details.responseHeaders, 'content-range') || header(details.responseHeaders, 'content-length'));
     if (sizeKnown && size < 100 * 1024) return; // 빈 응답, 아이콘/미리보기 같은 아주 작은 파일 제외
 
     const media = await load();
-    const list = (media[details.tabId] ||= []);
+    const list = (media[tabId] ||= []);
     // 같은 주소를 다시 불러오면(프레임을 새로 만든 경우 등) 지금 문서의 것으로 바꿔 맨 앞에 둔다.
     // 처음 본 문서 ID를 그대로 두면 팝업이 "다른 페이지의 파일"로 보고 숨긴다.
     const old = list.findIndex(m => m.url === details.url);
@@ -88,7 +121,7 @@ chrome.webRequest.onHeadersReceived.addListener(
     list.unshift({ url: details.url, type: type || 'video/mp4', size, ts: details.timeStamp, documentId: details.documentId || '' });
     list.length = Math.min(list.length, MAX_PER_TAB);
     save(media);
-    updateBadge(details.tabId);
+    updateBadge(tabId);
   },
   { urls: ['<all_urls>'], types: ['media', 'xmlhttprequest', 'other'] },
   ['responseHeaders']
@@ -110,6 +143,7 @@ async function updateBadge(tabId) {
 // 배경이 잠들어 있다 깨어날 때는 "페이지가 바뀜" 신호가 "영상 파일 발견" 신호보다 늦게 도착할 수 있다.
 // 도착 순서로 지우면 새 페이지에서 방금 찾은 파일까지 지워지므로, 실제 발생 시각으로 판단한다.
 async function clearTab(tabId, before = Infinity) {
+  netLog.delete(tabId);
   await streamTabsReady;
   if ((streamTabs.get(tabId)?.ts ?? Infinity) < before || before === Infinity) {
     if (streamTabs.delete(tabId)) chrome.storage.session.set({ streamTabs: [...streamTabs] });
@@ -220,7 +254,7 @@ chrome.webRequest.onHeadersReceived.addListener(
 // 확장 자체 화면(팝업·보관함·녹화 창·숨겨진 페이지)에서만 받는 요청. 웹페이지에 들어간 content.js가 보낸 것은 거절한다.
 const captureTabs = new Set(); // 페이지 전체 캡처가 진행 중인 탭
 const EXT_ONLY = new Set(['capture-start', 'tabrec-start', 'tabrec-stop', 'tabrec-ended', 'download', 'shot-tab', 'log-save', 'library-update', 'probe-media',
-  'library-import', 'hls-start', 'hls-cancel', 'hls-stop', 'hls-clear', 'hls-probe', 'hls-host', 'hls-progress', 'hls-done', 'add-streams']);
+  'library-import', 'diag', 'hls-start', 'hls-cancel', 'hls-stop', 'hls-clear', 'hls-probe', 'hls-host', 'hls-progress', 'hls-done', 'add-streams']);
 const SAVE_EXTS = new Set(['mp4', 'm4v', 'webm', 'mov', 'ogv', 'mkv', 'png', 'm4a', 'weba']);
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
@@ -359,6 +393,15 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true;
   }
   if (msg.type === 'hls-probe') { hlsProbe(msg).then(sendResponse, e => sendResponse({ ok: false, error: e.message })); return true; }
+  // 진단 정보: 이 탭에서 본 영상 관련 응답, 찾은 스트리밍 목록, 원본 파일 (주소의 인증값 등은 빼고)
+  if (msg.type === 'diag') {
+    Promise.all([streamTabsReady, load()]).then(([, media]) => {
+      const strip = u => { try { const x = new URL(u); return `${x.hostname}${x.pathname}${x.search ? ` (+${x.search.length}자)` : ''}`; } catch { return ''; } };
+      sendResponse({ net: netLog.get(msg.tabId) || [], streamAny: streamTabs.has(msg.tabId), lists: (streamTabs.get(msg.tabId)?.hls || []).map(h => `${h.kind} ${strip(h.url)}`),
+        files: (media[msg.tabId] || []).map(f => `${f.type} ${f.size || '?'} ${strip(f.url)}`) });
+    });
+    return true;
+  }
   if (msg.type === 'hls-start') { hlsEnqueue(msg).then(sendResponse, e => sendResponse({ ok: false, error: e.message })); return true; }
   if (msg.type === 'hls-stop') { hlsStop(String(msg.id)).then(() => sendResponse({ ok: true })); return true; }
   if (msg.type === 'hls-cancel') { hlsCancel(String(msg.id)).then(() => sendResponse({ ok: true })); return true; }

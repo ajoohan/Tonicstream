@@ -79,7 +79,7 @@ if (!(() => { try { return typeof window.__tonicstream === 'function' && window.
   function scanStreams() {
     const out = new Set();
     const add = raw => {
-      try { const u = new URL(raw, document.baseURI); if (/^https?:$/.test(u.protocol) && /\.(m3u8|mpd)$/i.test(u.pathname)) out.add(u.href.split('#')[0]); } catch {}
+      try { const u = new URL(raw, document.baseURI); if (/^https?:$/.test(u.protocol) && /\.(m3u8|mpd)(?=$|[/?&#;])/i.test(u.pathname + u.search)) out.add(u.href.split('#')[0]); } catch {}
     };
     try { for (const e of performance.getEntriesByType('resource')) add(e.name); } catch {}
     for (const v of document.querySelectorAll('video, video source')) { add(v.currentSrc || ''); add(v.getAttribute('src') || ''); }
@@ -797,6 +797,20 @@ if (!(() => { try { return typeof window.__tonicstream === 'function' && window.
     if (msg.type === 'ctx') {
       ctxAction(msg.action, msg.title).then(sendResponse, e => { toast(e.message); sendResponse({ ok: false, error: e.message }); });
       return true;
+    }
+    // 진단 정보: 이 프레임의 영상 요소, 끼워 넣은 프레임, 브라우저가 기록한 영상 관련 요청 (주소의 인증값은 빼고)
+    if (msg.type === 'diag') {
+      const strip = u => { try { const x = new URL(u, location.href); return x.protocol === 'blob:' ? 'blob:(MSE 스트리밍)' : `${x.hostname}${x.pathname}${x.search ? ` (+${x.search.length}자)` : ''}`; } catch { return String(u).slice(0, 40); } };
+      const media = /\.(m3u8|mpd|ts|m4s|mp4|m4v|m4a|aac|webm|key)(?=$|[/?])|playlist|master|manifest|\/hls\/|\/dash\//i;
+      let perf = [];
+      try { perf = performance.getEntriesByType('resource').filter(e => media.test(e.name)).slice(-25).map(e => `${e.initiatorType} ${strip(e.name)}`); } catch {}
+      sendResponse({
+        frame: `${location.hostname}${location.pathname}`, top: window === top,
+        videos: [...document.querySelectorAll('video')].map(v => `${strip(v.currentSrc || v.src || '')} · ${v.videoWidth}x${v.videoHeight} · ${Number.isFinite(v.duration) ? Math.round(v.duration) + '초' : '길이 모름'} · ${v.paused ? '멈춤' : '재생 중'}${v.mediaKeys ? ' · DRM' : ''}`),
+        iframes: [...document.querySelectorAll('iframe')].slice(0, 10).map(f => strip(f.src || '')).filter(Boolean),
+        perf,
+      });
+      return;
     }
     if (msg.type === 'meta') { if (window !== top) return; sendResponse(pageMeta()); return; }
     if (msg.type === 'sheet') {
