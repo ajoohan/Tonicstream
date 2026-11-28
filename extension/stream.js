@@ -73,7 +73,8 @@ function tagSignal(signal, origin, job, from = null) {
   return signal;
 }
 // 같은 영상 서버를 다른 사이트의 작업이 쓰고 있어서 함께 받을 수 없는 경우. 배경이 이 작업을 목록에 되돌려 두었다가 나중에 받는다.
-class SlotBusy extends Error {}
+class SlotBusy extends Error { constructor(msg, reason = 'server') { super(msg); this.reason = reason; } }
+const yielded = new Set(); // 배경이 "다른 작업에 서버를 넘기고 목록으로 돌아가라"고 한 작업
 async function allowHost(url, signal) {
   const origin = signal?.tsOrigin, allowed = signal?.tsAllowed;
   let host = '';
@@ -81,7 +82,10 @@ async function allowHost(url, signal) {
   if (!origin || !host || !allowed) return;
   if (!allowed.has(host)) allowed.set(host, chrome.runtime.sendMessage({ type: 'hls-host', origin, host, job: signal.tsJob }).catch(() => null));
   const res = await allowed.get(host);
-  if (res?.busy && signal.tsJob !== 'probe') throw new SlotBusy('함께 받을 수 없어 기다립니다');
+  if (res?.busy) {
+    if (signal.tsJob === 'probe') { signal.tsBusy = true; return; } // 화질 확인은 그대로 해 보고, 실패하면 이유를 알려 준다
+    throw new SlotBusy('함께 받을 수 없어 기다립니다');
+  }
 }
 
 async function fetchRetry(url, { range = null, signal, text = false, fresh = false, meta = false } = {}) {
@@ -535,7 +539,7 @@ async function runJobInner(msg, report, job) {
 
   const sink = await openSink();
   // 디스크에 쓸 수 없어 메모리에 모아야 하는데 다른 작업도 받는 중이면, 메모리가 모자랄 수 있으므로 함께 받지 않는다
-  if (!sink.disk && running.size > 1) { await sink.abort(); throw new SlotBusy('함께 받을 수 없어 기다립니다'); }
+  if (!sink.disk && running.size > 1) { await sink.abort(); throw new SlotBusy('함께 받을 수 없어 기다립니다', 'memory'); }
   const cap = sink.disk ? MAX_DISK : MAX_MEMORY;
   try {
     const est = pres.live ? 0 : pres.est(variantId);
@@ -671,6 +675,7 @@ async function probe(msg) {
     return { ok: true, kind: p.kind, live: p.live, duration: Math.round(p.duration), variant: p.variant, audio: p.audio,
       variants: p.variants.map(v => ({ id: v.id, label: v.label })), audios: p.audios.map(a => ({ id: a.id, label: a.label })), est: p.est(p.variant) || 0 };
   } catch (e) {
+    if (ctl.signal.tsBusy) return { ok: false, busy: true, error: '받는 중인 다른 다운로드가 같은 영상 서버를 쓰고 있어 지금은 확인할 수 없습니다. 그 다운로드가 끝나면 다시 확인합니다.' };
     return { ok: false, error: e.name === 'AbortError' ? '목록을 읽는 데 너무 오래 걸립니다.' : e.message };
   } finally { clearTimeout(timer); }
 }
@@ -688,7 +693,9 @@ async function hlsRun(msg) {
     const res = await runJob(msg, p => { state = p; if (Date.now() - last > 500 || p.done === p.total) send(); });
     await chrome.runtime.sendMessage({ type: 'hls-done', job: msg.job, ok: true, ...res });
   } catch (e) {
-    await chrome.runtime.sendMessage({ type: 'hls-done', job: msg.job, ok: false, slotBusy: e instanceof SlotBusy, error: e.name === 'AbortError' ? '취소했습니다.' : e.message }).catch(() => {});
+    const yieldedNow = yielded.delete(msg.job); // 서버를 넘기라고 해서 멈춘 것이면 취소가 아니라 목록으로 돌아간다
+    await chrome.runtime.sendMessage({ type: 'hls-done', job: msg.job, ok: false, slotBusy: e instanceof SlotBusy || yieldedNow,
+      slotReason: e instanceof SlotBusy ? e.reason : 'server', error: e.name === 'AbortError' ? '취소했습니다.' : e.message }).catch(() => {});
   } finally { clearInterval(beat); }
 }
 
@@ -697,6 +704,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // 취소·정지는 그 작업에만
   const mine = running.get(msg.job);
   if (msg.type === 'offscreen-hls-cancel') { mine?.ctl.abort(); sendResponse({ active: !!mine }); return; }
+  if (msg.type === 'offscreen-hls-yield') { if (mine) { yielded.add(msg.job); mine.ctl.abort(); } return; }
   if (msg.type === 'offscreen-hls-stop') { if (mine) { mine.stopped = true; mine.wake?.(); } sendResponse({ active: !!mine }); return; }
   if (msg.type === 'offscreen-hls-probe') { probe(msg).then(sendResponse); return true; }
   if (msg.type === 'offscreen-revoke' && diskFiles.has(msg.url)) {

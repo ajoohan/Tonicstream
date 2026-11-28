@@ -189,6 +189,7 @@ const isActive = j => j.state === 'queued' || j.state === 'running';
 // 이 페이지의 스트리밍 영상 카드: 화질·소리를 고르고 다운로드 목록에 더한다.
 // 다른 영상을 받는 중이어도 목록에 더해 두면 차례로 받는다.
 function streamCard(stream, jobs) {
+  if (probed?.busy && !jobs.some(isActive)) probed = null; // 막고 있던 다운로드가 끝났으니 다시 확인한다
   const row = el('div', { className: 'row' });
   const parts = [];
   let head = '스트리밍 영상', info = '';
@@ -228,7 +229,9 @@ let jobsTimer = null;
 function jobRow(j, order) {
   const pct = j.total ? Math.round(j.done / j.total * 100) : 0;
   let line = '', barPct = 0;
-  if (j.state === 'queued') line = `대기 중 · ${order}번째${j.variantLabel ? ` · ${j.variantLabel}` : ''}${j.afterLive ? ' · 같은 영상 서버를 쓰는 다른 다운로드가 끝나면 받습니다' : ''}`;
+  const why = !j.afterLive ? '' : j.waitReason === 'memory' ? ' · 이 PC에서는 한 번에 하나씩 받아, 앞 다운로드가 끝나면 받습니다'
+    : ' · 같은 영상 서버를 쓰는 다른 다운로드가 끝나면 받습니다';
+  if (j.state === 'queued') line = `대기 중 · ${order}번째${j.variantLabel ? ` · ${j.variantLabel}` : ''}${why}${j.restarted ? ' (처음부터 다시 받음)' : ''}`;
   else if (j.state === 'running') {
     if (j.live) line = `생방송 받는 중 · ${fmtTime(j.seconds)}${j.bytes ? ` · ${fmtSize(j.bytes)}` : ''}`;
     else if (j.total) {
