@@ -971,13 +971,20 @@ function allowHost(origin, host, job = '') {
     const [{ hlsRules = {} }, { hlsJobs = [] }] = await Promise.all([chrome.storage.session.get('hlsRules'), chrome.storage.session.get('hlsJobs')]);
     const touched = new Set();
     // 같은 서버를 다른 페이지가 쓰고 있었으면 지금 것으로 옮긴다.
-    // 단, 받는 중인 작업이 그 서버를 쓰고 있으면 옮기지 않는다 (화질 확인 등 때문에 받던 영상이 거절되지 않게).
-    const busyOrigins = new Set(hlsJobs.filter(j => j.state === 'running' && j.id !== job).map(j => j.origin));
+    // 받는 중인 다른 작업이 그 서버를 쓰고 있으면, 먼저 시작한 작업이 이긴다:
+    //  - 묻는 쪽이 나중에 시작했거나 화질 확인이면 → 옮기지 않고 "함께 받을 수 없음"으로 답한다
+    //  - 묻는 쪽이 먼저 시작했으면(예: 생방송의 서버가 도중에 바뀜) → 서버를 가져오고, 나중에 시작한 작업을 목록으로 되돌린다
+    const me = hlsJobs.find(j => j.id === job && j.state === 'running');
+    const myStart = me?.startedAt ?? Infinity;
+    const yieldIds = [];
     for (const [o, r] of Object.entries(hlsRules)) {
       if (o === origin || !r.hosts.includes(host)) continue;
-      if (busyOrigins.has(o)) { blocked = true; return; }
+      const owners = hlsJobs.filter(j => j.state === 'running' && j.id !== job && j.origin === o);
+      if (owners.some(j => (j.startedAt ?? 0) <= myStart)) { blocked = true; return; }
+      yieldIds.push(...owners.map(j => j.id));
       r.hosts = r.hosts.filter(h => h !== host); touched.add(o);
     }
+    for (const id of yieldIds) chrome.runtime.sendMessage({ type: 'offscreen-hls-yield', job: id }).catch(() => {});
     let r = hlsRules[origin];
     if (!r) { const used = new Set(Object.values(hlsRules).map(x => x.id)); let id = 10; while (used.has(id)) id++; r = hlsRules[origin] = { id, hosts: [] }; }
     if (!r.hosts.includes(host)) { r.hosts.push(host); touched.add(origin); }
@@ -1119,7 +1126,8 @@ async function hlsDone(res) {
     if (!j || j.state !== 'running') return; // 지난 작업(취소·중단 처리된 것)의 소식
     let next;
     // 함께 받을 수 없었던 것(같은 영상 서버를 쓰는 다른 작업이 있음): 목록에 되돌려 두고, 앞 작업이 끝난 뒤 받는다
-    if (!res.ok && res.slotBusy) next = { ...j, state: 'queued', afterLive: true, done: 0, total: 0, bytes: 0, seconds: 0 };
+    if (!res.ok && res.slotBusy) next = { ...j, state: 'queued', afterLive: true, waitReason: res.slotReason === 'memory' ? 'memory' : 'server',
+      restarted: !!(j.done || j.bytes), done: 0, total: 0, bytes: 0, seconds: 0 };
     else if (!res.ok) next = /취소/.test(res.error || '') ? { ...j, state: 'canceled', endedAt: Date.now() } : failed(j, res.error || '받지 못했습니다.');
     else {
       try {
